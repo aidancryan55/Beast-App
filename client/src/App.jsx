@@ -26,7 +26,7 @@ function LoginScreen({ onLogin }) {
     <div className="login-screen">
       <div className="login-card">
         <div className="login-emoji">🎓🍺🎉</div>
-        <h1>College Cliché Quest</h1>
+        <h1>The Beast Game</h1>
         <p className="tagline">Live the cliché. Earn Beast Points. Become a Beast.</p>
         <form onSubmit={submit}>
           <input
@@ -320,7 +320,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="app-title">🎓 College Cliché Quest</div>
+        <div className="app-title">🎓 The Beast Game</div>
         <div className="app-user">
           <span>{username}</span>
           <button className="logout-btn" onClick={logout}>Switch player</button>

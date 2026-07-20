@@ -149,4 +149,4 @@ app.get(/^(?!\/api\/).*/, (req, res) => {
 });
 
 const PORT = process.env.PORT || 4001;
-app.listen(PORT, () => console.log(`College Cliche Quest listening on :${PORT}`));
+app.listen(PORT, () => console.log(`The Beast Game listening on :${PORT}`));
