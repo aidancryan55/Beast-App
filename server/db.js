@@ -10,6 +10,13 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    password_hash TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -63,6 +70,12 @@ db.exec(`
     UNIQUE(post_id, user_id)
   );
 `);
+
+// --- Migrations for databases created before `password_hash` existed ---
+const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userCols.includes('password_hash')) {
+  db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+}
 
 // --- Migrations for databases created before `repeatable` / `period_key` existed ---
 const activityCols = db.prepare('PRAGMA table_info(activities)').all().map((c) => c.name);

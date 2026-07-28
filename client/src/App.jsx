@@ -4,8 +4,10 @@ import './App.css';
 
 const RARITY_ORDER = { common: 0, uncommon: 1, rare: 2, legendary: 3 };
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onAuth }) {
+  const [mode, setMode] = useState('login');
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -14,7 +16,7 @@ function LoginScreen({ onLogin }) {
     setError('');
     setLoading(true);
     try {
-      await onLogin(name.trim());
+      await onAuth(mode, name.trim(), password);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -28,20 +30,30 @@ function LoginScreen({ onLogin }) {
         <div className="login-emoji">🎓🍺🎉</div>
         <h1>The Beast Game</h1>
         <p className="tagline">Live the cliché. Earn Beast Points. Become a Beast.</p>
+        <div className="auth-toggle">
+          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Log In</button>
+          <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Sign Up</button>
+        </div>
         <form onSubmit={submit}>
           <input
             autoFocus
-            placeholder="Pick a nickname"
+            placeholder="Nickname"
             value={name}
             maxLength={20}
             onChange={(e) => setName(e.target.value)}
           />
-          <button type="submit" disabled={loading || name.trim().length < 2}>
-            {loading ? 'Loading…' : 'Start Questing'}
+          <input
+            placeholder="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button type="submit" disabled={loading || name.trim().length < 2 || password.length < 6}>
+            {loading ? 'Loading…' : mode === 'login' ? 'Log In' : 'Create Account'}
           </button>
         </form>
         {error && <p className="error">{error}</p>}
-        <p className="fineprint">No password needed — just a nickname. Your progress shows up on the public leaderboard, so don't use your real name if you'd rather stay anonymous.</p>
+        <p className="fineprint">Your progress shows up on the public leaderboard, so don't use your real name if you'd rather stay anonymous.</p>
       </div>
     </div>
   );
@@ -557,8 +569,22 @@ function LeaderboardView({ leaderboard, currentUsername }) {
   );
 }
 
+function loadStoredAuth() {
+  try {
+    const raw = localStorage.getItem('ccq_auth');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
-  const [username, setUsername] = useState(() => localStorage.getItem('ccq_username') || '');
+  const [auth, setAuth] = useState(() => {
+    const stored = loadStoredAuth();
+    if (stored?.token) api.setToken(stored.token);
+    return stored;
+  });
+  const username = auth?.username || '';
   const [activities, setActivities] = useState([]);
   const [progress, setProgress] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
@@ -567,16 +593,33 @@ export default function App() {
   const [tab, setTab] = useState('activities');
   const [loadError, setLoadError] = useState('');
 
-  async function login(name) {
-    const user = await api.createOrGetUser(name);
-    localStorage.setItem('ccq_username', user.username);
-    setUsername(user.username);
+  async function handleAuth(mode, name, password) {
+    const result = mode === 'signup' ? await api.signup(name, password) : await api.login(name, password);
+    api.setToken(result.token);
+    const authData = { username: result.username, token: result.token };
+    localStorage.setItem('ccq_auth', JSON.stringify(authData));
+    setAuth(authData);
   }
 
-  function logout() {
-    localStorage.removeItem('ccq_username');
-    setUsername('');
+  async function logout() {
+    try {
+      await api.logout();
+    } catch {
+      // best-effort — clear local state regardless
+    }
+    localStorage.removeItem('ccq_auth');
+    api.setToken(null);
+    setAuth(null);
     setProgress(null);
+  }
+
+  async function withAuthGuard(fn) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.message === 'Please log in again') logout();
+      throw err;
+    }
   }
 
   async function refreshAll() {
@@ -616,10 +659,12 @@ export default function App() {
   }, [username]);
 
   async function handleToggle(activityKey) {
-    const updated = await api.toggleActivity(username, activityKey);
-    setProgress(updated);
-    const board = await api.getLeaderboard();
-    setLeaderboard(board);
+    await withAuthGuard(async () => {
+      const updated = await api.toggleActivity(username, activityKey);
+      setProgress(updated);
+      const board = await api.getLeaderboard();
+      setLeaderboard(board);
+    });
   }
 
   async function handleFriendSearch(q) {
@@ -627,42 +672,54 @@ export default function App() {
   }
 
   async function handleFriendRequest(targetUsername) {
-    await api.sendFriendRequest(username, targetUsername);
-    await refreshFriends();
+    await withAuthGuard(async () => {
+      await api.sendFriendRequest(username, targetUsername);
+      await refreshFriends();
+    });
   }
 
   async function handleFriendRespond(requesterUsername, accept) {
-    await api.respondFriendRequest(username, requesterUsername, accept);
-    await refreshFriends();
-    await refreshFeed();
+    await withAuthGuard(async () => {
+      await api.respondFriendRequest(username, requesterUsername, accept);
+      await refreshFriends();
+      await refreshFeed();
+    });
   }
 
   async function handleFriendRemove(targetUsername) {
-    await api.removeFriend(username, targetUsername);
-    await refreshFriends();
-    await refreshFeed();
+    await withAuthGuard(async () => {
+      await api.removeFriend(username, targetUsername);
+      await refreshFriends();
+      await refreshFeed();
+    });
   }
 
   async function handleSubmitPost({ subjectUsername, activityKey, points, caption, photo }) {
-    await api.createPost({ creditedByUsername: username, subjectUsername, activityKey, points, caption, photo });
-    await refreshFeed();
-    const [prog, board] = await Promise.all([api.getProgress(username), api.getLeaderboard()]);
-    setProgress(prog);
-    setLeaderboard(board);
+    await withAuthGuard(async () => {
+      await api.createPost({ subjectUsername, activityKey, points, caption, photo });
+      await refreshFeed();
+      const [prog, board] = await Promise.all([api.getProgress(username), api.getLeaderboard()]);
+      setProgress(prog);
+      setLeaderboard(board);
+    });
   }
 
   async function handleReact(postId, emoji) {
-    await api.reactToPost(postId, username, emoji);
-    await refreshFeed();
+    await withAuthGuard(async () => {
+      await api.reactToPost(postId, emoji);
+      await refreshFeed();
+    });
   }
 
   async function handleSavePost(postId) {
-    await api.savePost(postId, username);
-    await refreshFeed();
+    await withAuthGuard(async () => {
+      await api.savePost(postId);
+      await refreshFeed();
+    });
   }
 
   if (!username) {
-    return <LoginScreen onLogin={login} />;
+    return <LoginScreen onAuth={handleAuth} />;
   }
 
   if (!progress) {
@@ -675,7 +732,7 @@ export default function App() {
         <div className="app-title">🎓 The Beast Game</div>
         <div className="app-user">
           <span>{username}</span>
-          <button className="logout-btn" onClick={logout}>Switch player</button>
+          <button className="logout-btn" onClick={logout}>Log out</button>
         </div>
       </header>
 

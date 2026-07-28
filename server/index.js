@@ -30,6 +30,45 @@ const upload = multer({
   fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
 });
 
+// --- Auth: password hashing (scrypt, no extra dependency) + opaque session tokens ---
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+function verifyPassword(password, stored) {
+  if (!stored) return false;
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
+  const check = crypto.scryptSync(password, salt, 64);
+  const expected = Buffer.from(hash, 'hex');
+  return check.length === expected.length && crypto.timingSafeEqual(check, expected);
+}
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, userId);
+  return token;
+}
+function getUserByToken(token) {
+  if (!token) return null;
+  return db.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(token) || null;
+}
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const user = getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Please log in again' });
+  req.authUser = user;
+  req.authToken = token;
+  next();
+}
+function requireSelf(req, res, next) {
+  if (req.authUser.username.toLowerCase() !== req.params.username.toLowerCase()) {
+    return res.status(403).json({ error: "You can't do that for another user" });
+  }
+  next();
+}
+
 function levelForXp(xp) {
   let current = LEVELS[0];
   for (const lvl of LEVELS) {
@@ -213,18 +252,49 @@ function getFriendIds(userId) {
   return rows.map((r) => (r.requester_id === userId ? r.addressee_id : r.requester_id));
 }
 
-// --- Users ---
-app.post('/api/users', (req, res) => {
-  const { username } = req.body || {};
+// --- Auth ---
+app.post('/api/signup', (req, res) => {
+  const { username, password } = req.body || {};
   if (!username || !USERNAME_RE.test(username)) {
     return res.status(400).json({ error: 'Nickname must be 2-20 characters (letters, numbers, spaces, underscores).' });
   }
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+
   let user = getUserByUsername(username);
-  if (!user) {
-    const info = db.prepare('INSERT INTO users (username) VALUES (?)').run(username);
+  if (user && user.password_hash) {
+    return res.status(409).json({ error: 'That nickname is already taken.' });
+  }
+
+  const hash = hashPassword(password);
+  if (user && !user.password_hash) {
+    // Legacy/unclaimed account from before accounts had passwords — claim it.
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+  } else {
+    const info = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
     user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
   }
-  res.json({ id: user.id, username: user.username });
+
+  const token = createSession(user.id);
+  res.status(201).json({ username: user.username, token });
+});
+
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const user = getUserByUsername(username || '');
+  if (!user) return res.status(404).json({ error: 'No account with that nickname — sign up instead.' });
+  if (!user.password_hash) return res.status(400).json({ error: 'This account needs a password — use Sign Up to claim it.' });
+  if (!verifyPassword(password || '', user.password_hash)) {
+    return res.status(401).json({ error: 'Wrong password.' });
+  }
+  const token = createSession(user.id);
+  res.json({ username: user.username, token });
+});
+
+app.post('/api/logout', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM sessions WHERE token = ?').run(req.authToken);
+  res.json({ status: 'logged out' });
 });
 
 // --- Activities ---
@@ -241,7 +311,7 @@ app.get('/api/users/:username/progress', (req, res) => {
 });
 
 // --- Toggle completion ---
-app.post('/api/users/:username/toggle', (req, res) => {
+app.post('/api/users/:username/toggle', requireAuth, requireSelf, (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const { activityKey } = req.body || {};
@@ -307,7 +377,7 @@ app.get('/api/users/:username/search', (req, res) => {
   res.json(results);
 });
 
-app.post('/api/users/:username/friends/request', (req, res) => {
+app.post('/api/users/:username/friends/request', requireAuth, requireSelf, (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const target = getUserByUsername((req.body || {}).targetUsername);
@@ -330,7 +400,7 @@ app.post('/api/users/:username/friends/request', (req, res) => {
   res.json({ status: 'pending' });
 });
 
-app.post('/api/users/:username/friends/respond', (req, res) => {
+app.post('/api/users/:username/friends/respond', requireAuth, requireSelf, (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const requester = getUserByUsername((req.body || {}).requesterUsername);
@@ -350,7 +420,7 @@ app.post('/api/users/:username/friends/respond', (req, res) => {
   res.json({ status: accept ? 'accepted' : 'declined' });
 });
 
-app.post('/api/users/:username/friends/remove', (req, res) => {
+app.post('/api/users/:username/friends/remove', requireAuth, requireSelf, (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const target = getUserByUsername((req.body || {}).targetUsername);
@@ -391,9 +461,8 @@ function serializePost(row, viewerUserId) {
   };
 }
 
-app.post('/api/posts', upload.single('photo'), (req, res) => {
-  const creditedBy = getUserByUsername((req.body || {}).creditedByUsername);
-  if (!creditedBy) return res.status(404).json({ error: 'User not found' });
+app.post('/api/posts', requireAuth, upload.single('photo'), (req, res) => {
+  const creditedBy = req.authUser;
   const subject = getUserByUsername((req.body || {}).subjectUsername);
   if (!subject) return res.status(404).json({ error: 'That friend does not exist' });
   if (subject.id === creditedBy.id) return res.status(400).json({ error: "You can't credit yourself" });
@@ -451,9 +520,8 @@ app.get('/api/users/:username/feed', (req, res) => {
   res.json(posts);
 });
 
-app.post('/api/posts/:postId/react', (req, res) => {
-  const user = getUserByUsername((req.body || {}).username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
+  const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
   const { emoji } = req.body || {};
@@ -480,9 +548,8 @@ app.post('/api/posts/:postId/react', (req, res) => {
   res.json(serializePost(row, user.id));
 });
 
-app.post('/api/posts/:postId/save', (req, res) => {
-  const user = getUserByUsername((req.body || {}).username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+app.post('/api/posts/:postId/save', requireAuth, (req, res) => {
+  const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
   if (post.subject_user_id !== user.id) return res.status(403).json({ error: 'Only the person in the photo can save it' });

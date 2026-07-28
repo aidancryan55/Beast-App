@@ -1,9 +1,20 @@
 const BASE = '/api';
+let authToken = null;
 
-async function req(path, options) {
+function setToken(token) {
+  authToken = token;
+}
+
+function authHeaders(extra = {}) {
+  const headers = { ...extra };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  return headers;
+}
+
+async function req(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: authHeaders({ 'Content-Type': 'application/json', ...(options.headers || {}) }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -13,7 +24,7 @@ async function req(path, options) {
 }
 
 async function reqForm(path, formData) {
-  const res = await fetch(`${BASE}${path}`, { method: 'POST', body: formData });
+  const res = await fetch(`${BASE}${path}`, { method: 'POST', body: formData, headers: authHeaders() });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed: ${res.status}`);
@@ -22,7 +33,11 @@ async function reqForm(path, formData) {
 }
 
 export const api = {
-  createOrGetUser: (username) => req('/users', { method: 'POST', body: JSON.stringify({ username }) }),
+  setToken,
+  signup: (username, password) => req('/signup', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  login: (username, password) => req('/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  logout: () => req('/logout', { method: 'POST' }),
+
   getActivities: () => req('/activities'),
   getProgress: (username) => req(`/users/${encodeURIComponent(username)}/progress`),
   toggleActivity: (username, activityKey) =>
@@ -39,9 +54,8 @@ export const api = {
     req(`/users/${encodeURIComponent(username)}/friends/remove`, { method: 'POST', body: JSON.stringify({ targetUsername }) }),
 
   getFeed: (username) => req(`/users/${encodeURIComponent(username)}/feed`),
-  createPost: ({ creditedByUsername, subjectUsername, activityKey, points, caption, photo }) => {
+  createPost: ({ subjectUsername, activityKey, points, caption, photo }) => {
     const form = new FormData();
-    form.append('creditedByUsername', creditedByUsername);
     form.append('subjectUsername', subjectUsername);
     if (activityKey) form.append('activityKey', activityKey);
     form.append('points', points);
@@ -49,8 +63,6 @@ export const api = {
     form.append('photo', photo);
     return reqForm('/posts', form);
   },
-  reactToPost: (postId, username, emoji) =>
-    req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ username, emoji }) }),
-  savePost: (postId, username) =>
-    req(`/posts/${postId}/save`, { method: 'POST', body: JSON.stringify({ username }) }),
+  reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),
+  savePost: (postId) => req(`/posts/${postId}/save`, { method: 'POST' }),
 };

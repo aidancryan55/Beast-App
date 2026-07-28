@@ -34,6 +34,31 @@
   margin-bottom: 24px;
 }
 
+.auth-toggle {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px;
+  margin-bottom: 16px;
+}
+
+.auth-toggle button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.auth-toggle button.active {
+  background: var(--primary);
+  color: white;
+}
+
 .login-card form {
   display: flex;
   flex-direction: column;

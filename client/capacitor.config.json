@@ -1,0 +1,12 @@
+{
+  "appId": "com.aidanryan.beastgame",
+  "appName": "The Beast Game",
+  "webDir": "dist",
+  "server": {
+    "url": "https://beast-app-0y3m.onrender.com",
+    "cleartext": false
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}
