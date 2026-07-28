@@ -63,7 +63,7 @@ function XpBar({ levelInfo }) {
       <div className="xp-bar-caption">
         {levelInfo.nextLevelMinXp
           ? `${levelInfo.nextLevelMinXp - levelInfo.xp} Beast Points to next level`
-          : 'Max level reached — you are a certified Beast'}
+          : 'Max level reached — you are a certified Ferda Beast'}
       </div>
     </div>
   );
@@ -73,7 +73,17 @@ function RarityBadge({ rarity }) {
   return <span className={`rarity rarity-${rarity}`}>{rarity}</span>;
 }
 
-function ActivityCard({ activity, completed, onToggle }) {
+function FrequencyBadge({ repeatable }) {
+  if (!repeatable) return null;
+  return <span className={`frequency frequency-${repeatable}`}>{repeatable}</span>;
+}
+
+function StreakBadge({ streak }) {
+  if (!streak) return null;
+  return <span className="streak-pill">🔥 {streak}</span>;
+}
+
+function ActivityCard({ activity, completed, streak, onToggle }) {
   return (
     <button
       className={`activity-card ${completed ? 'completed' : ''}`}
@@ -84,7 +94,9 @@ function ActivityCard({ activity, completed, onToggle }) {
         <span className="activity-name">{activity.name}</span>
         <span className="activity-meta">
           <RarityBadge rarity={activity.rarity} />
+          <FrequencyBadge repeatable={activity.repeatable} />
           <span className="activity-xp">+{activity.xp} BP</span>
+          <StreakBadge streak={streak} />
         </span>
       </span>
       <span className="activity-check">{completed ? '✓' : ''}</span>
@@ -92,10 +104,10 @@ function ActivityCard({ activity, completed, onToggle }) {
   );
 }
 
-function QuickLogBar({ activities, completedKeys, onToggle }) {
+function QuickLogBar({ activities, currentPeriodKeys, streaks, onToggle }) {
   const [query, setQuery] = useState('');
   const inputRef = useRef(null);
-  const completedSet = new Set(completedKeys);
+  const completedSet = new Set(currentPeriodKeys);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -141,6 +153,7 @@ function QuickLogBar({ activities, completedKeys, onToggle }) {
         <div className="quick-log-results">
           {matches.map((a) => {
             const completed = completedSet.has(a.key);
+            const streak = streaks?.[a.key];
             return (
               <button
                 key={a.key}
@@ -149,6 +162,7 @@ function QuickLogBar({ activities, completedKeys, onToggle }) {
               >
                 <span className="activity-icon">{a.icon}</span>
                 <span className="activity-name">{a.name}</span>
+                {streak > 0 && <span className="streak-pill">🔥 {streak}</span>}
                 <span className="activity-xp">+{a.xp} BP</span>
                 <span className="activity-check">{completed ? '✓' : ''}</span>
               </button>
@@ -160,7 +174,7 @@ function QuickLogBar({ activities, completedKeys, onToggle }) {
   );
 }
 
-function ActivitiesView({ activities, completedKeys, onToggle, completedByCategory }) {
+function ActivitiesView({ activities, currentPeriodKeys, streaks, onToggle, completedByCategory }) {
   const byCategory = useMemo(() => {
     const map = {};
     for (const a of activities) {
@@ -173,11 +187,11 @@ function ActivitiesView({ activities, completedKeys, onToggle, completedByCatego
     return map;
   }, [activities]);
 
-  const completedSet = new Set(completedKeys);
+  const completedSet = new Set(currentPeriodKeys);
 
   return (
     <div className="activities-view">
-      <QuickLogBar activities={activities} completedKeys={completedKeys} onToggle={onToggle} />
+      <QuickLogBar activities={activities} currentPeriodKeys={currentPeriodKeys} streaks={streaks} onToggle={onToggle} />
       {Object.entries(byCategory).map(([category, items]) => {
         const prog = completedByCategory?.[category];
         return (
@@ -196,6 +210,7 @@ function ActivitiesView({ activities, completedKeys, onToggle, completedByCatego
                   key={a.key}
                   activity={a}
                   completed={completedSet.has(a.key)}
+                  streak={streaks?.[a.key]}
                   onToggle={onToggle}
                 />
               ))}
@@ -203,6 +218,290 @@ function ActivitiesView({ activities, completedKeys, onToggle, completedByCatego
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function StreaksStrip({ streaks, activities }) {
+  const entries = Object.entries(streaks || {}).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return null;
+  const byKey = Object.fromEntries(activities.map((a) => [a.key, a]));
+  return (
+    <div className="streaks-strip">
+      {entries.map(([key, count]) => {
+        const a = byKey[key];
+        if (!a) return null;
+        const unit = a.repeatable === 'daily' ? 'day' : 'week';
+        return (
+          <span key={key} className="streak-chip">
+            🔥 {count} {unit}{count === 1 ? '' : 's'} · {a.name}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function PeriodTotals({ periodTotals }) {
+  if (!periodTotals) return null;
+  const rows = [
+    ['Today', periodTotals.today],
+    ['This Week', periodTotals.week],
+    ['This Month', periodTotals.month],
+    ['This Year', periodTotals.year],
+  ];
+  return (
+    <div className="period-totals">
+      {rows.map(([label, value]) => (
+        <div key={label} className="period-stat">
+          <span className="period-value">{value}</span>
+          <span className="period-label">{label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FriendsView({ friendsData, onSearch, onRequest, onRespond, onRemove }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+
+  async function runSearch(q) {
+    setQuery(q);
+    if (q.trim().length < 1) {
+      setResults([]);
+      return;
+    }
+    setResults(await onSearch(q.trim()));
+  }
+
+  const { friends = [], incomingRequests = [], outgoingRequests = [] } = friendsData || {};
+  const pendingSet = new Set([...friends, ...incomingRequests, ...outgoingRequests]);
+
+  return (
+    <div className="friends-view">
+      <div className="friend-search">
+        <input
+          placeholder="Search by nickname to add a friend"
+          value={query}
+          onChange={(e) => runSearch(e.target.value)}
+        />
+        {results.length > 0 && (
+          <div className="friend-search-results">
+            {results.map((name) => (
+              <div key={name} className="friend-row">
+                <span>{name}</span>
+                {pendingSet.has(name) ? (
+                  <span className="friend-status">pending / friends</span>
+                ) : (
+                  <button className="friend-action" onClick={() => onRequest(name)}>Add</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {incomingRequests.length > 0 && (
+        <section className="friend-section">
+          <h2>Requests</h2>
+          {incomingRequests.map((name) => (
+            <div key={name} className="friend-row">
+              <span>{name}</span>
+              <div className="friend-row-actions">
+                <button className="friend-action accept" onClick={() => onRespond(name, true)}>Accept</button>
+                <button className="friend-action decline" onClick={() => onRespond(name, false)}>Decline</button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {outgoingRequests.length > 0 && (
+        <section className="friend-section">
+          <h2>Sent</h2>
+          {outgoingRequests.map((name) => (
+            <div key={name} className="friend-row">
+              <span>{name}</span>
+              <span className="friend-status">pending</span>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="friend-section">
+        <h2>Friends ({friends.length})</h2>
+        {friends.length === 0 && <div className="empty-state">No friends yet — search above to add some.</div>}
+        {friends.map((name) => (
+          <div key={name} className="friend-row">
+            <span>{name}</span>
+            <button className="friend-action remove" onClick={() => onRemove(name)}>Remove</button>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function CreditFriendForm({ friends, activities, onSubmit, onClose }) {
+  const [subjectUsername, setSubjectUsername] = useState(friends[0] || '');
+  const [activityKey, setActivityKey] = useState('');
+  const [points, setPoints] = useState(20);
+  const [caption, setCaption] = useState('');
+  const [photo, setPhoto] = useState(null);
+  const [preview, setPreview] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhoto(file);
+    setPreview(URL.createObjectURL(file));
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!photo) {
+      setError('Add a photo first');
+      return;
+    }
+    if (!subjectUsername) {
+      setError('Pick a friend to credit');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      await onSubmit({ subjectUsername, activityKey, points: Number(points), caption, photo });
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="credit-modal-backdrop" onClick={onClose}>
+      <form className="credit-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <h2>📸 Credit a friend</h2>
+
+        <label className="photo-picker">
+          {preview ? <img src={preview} alt="" className="photo-preview" /> : <span>Tap to take/choose a photo</span>}
+          <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} hidden />
+        </label>
+
+        <label>
+          Who's the beast?
+          <select value={subjectUsername} onChange={(e) => setSubjectUsername(e.target.value)}>
+            {friends.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </label>
+
+        <label>
+          What'd they do? (optional)
+          <select value={activityKey} onChange={(e) => setActivityKey(e.target.value)}>
+            <option value="">Just vibes</option>
+            {activities.map((a) => <option key={a.key} value={a.key}>{a.icon} {a.name}</option>)}
+          </select>
+        </label>
+
+        <label>
+          Beast Points to award
+          <input type="number" min="1" max="200" value={points} onChange={(e) => setPoints(e.target.value)} />
+        </label>
+
+        <label>
+          Caption (optional)
+          <input type="text" maxLength={140} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="caught him in the wild..." />
+        </label>
+
+        {error && <p className="error">{error}</p>}
+
+        <div className="credit-modal-actions">
+          <button type="button" className="secondary-btn" onClick={onClose}>Cancel</button>
+          <button type="submit" disabled={submitting}>{submitting ? 'Posting…' : 'Award points'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const REACTION_EMOJIS = ['🔥', '😂', '💀', '👑', '🐐'];
+
+function PostCard({ post, currentUsername, onReact, onSave }) {
+  const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
+  const hoursLeft = post.saved ? null : Math.max(0, Math.ceil((Date.parse(post.expiresAt) - Date.now()) / 3600000));
+
+  return (
+    <div className="post-card">
+      <div className="post-header">
+        <span className="post-credit-line">
+          <strong>{post.creditedByUsername}</strong> caught <strong>{post.subjectUsername}</strong>
+          {post.activityName && <> {post.activityIcon} {post.activityName}</>}
+        </span>
+        <span className="post-points">+{post.points} BP</span>
+      </div>
+      <img className="post-photo" src={post.photoUrl} alt="" />
+      {post.caption && <p className="post-caption">{post.caption}</p>}
+      <div className="post-footer">
+        <div className="post-reactions">
+          {REACTION_EMOJIS.map((emoji) => {
+            const count = post.reactions.find((r) => r.emoji === emoji)?.count || 0;
+            const mine = post.myReaction === emoji;
+            return (
+              <button
+                key={emoji}
+                className={`reaction-btn ${mine ? 'mine' : ''}`}
+                onClick={() => onReact(post.id, emoji)}
+              >
+                {emoji} {count > 0 ? count : ''}
+              </button>
+            );
+          })}
+        </div>
+        <div className="post-meta">
+          {post.saved ? <span className="post-saved">💾 saved</span> : <span className="post-expiry">expires in {hoursLeft}h</span>}
+          {isSubject && (
+            <button className="save-btn" onClick={() => onSave(post.id)}>
+              {post.saved ? 'Unsave' : 'Keep forever'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FeedView({ feed, friends, activities, currentUsername, onSubmitPost, onReact, onSave }) {
+  const [showForm, setShowForm] = useState(false);
+
+  return (
+    <div className="feed-view">
+      <button className="credit-friend-btn" onClick={() => setShowForm(true)} disabled={friends.length === 0}>
+        📸 Credit a friend
+      </button>
+      {friends.length === 0 && <p className="empty-state">Add friends first to start crediting each other.</p>}
+
+      {showForm && (
+        <CreditFriendForm
+          friends={friends}
+          activities={activities}
+          onSubmit={onSubmitPost}
+          onClose={() => setShowForm(false)}
+        />
+      )}
+
+      {feed.length === 0 ? (
+        <div className="empty-state">No posts yet — be the first to catch a friend doing something beastly.</div>
+      ) : (
+        <div className="post-list">
+          {feed.map((post) => (
+            <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onSave={onSave} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -263,6 +562,8 @@ export default function App() {
   const [activities, setActivities] = useState([]);
   const [progress, setProgress] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
+  const [friendsData, setFriendsData] = useState(null);
+  const [feed, setFeed] = useState([]);
   const [tab, setTab] = useState('activities');
   const [loadError, setLoadError] = useState('');
 
@@ -280,14 +581,18 @@ export default function App() {
 
   async function refreshAll() {
     try {
-      const [acts, prog, board] = await Promise.all([
+      const [acts, prog, board, friendsRes, feedRes] = await Promise.all([
         api.getActivities(),
         api.getProgress(username),
         api.getLeaderboard(),
+        api.getFriends(username),
+        api.getFeed(username),
       ]);
       setActivities(acts);
       setProgress(prog);
       setLeaderboard(board);
+      setFriendsData(friendsRes);
+      setFeed(feedRes);
     } catch (err) {
       if (err.message === 'User not found') {
         logout();
@@ -295,6 +600,14 @@ export default function App() {
       }
       setLoadError(err.message);
     }
+  }
+
+  async function refreshFriends() {
+    setFriendsData(await api.getFriends(username));
+  }
+
+  async function refreshFeed() {
+    setFeed(await api.getFeed(username));
   }
 
   useEffect(() => {
@@ -307,6 +620,45 @@ export default function App() {
     setProgress(updated);
     const board = await api.getLeaderboard();
     setLeaderboard(board);
+  }
+
+  async function handleFriendSearch(q) {
+    return api.searchUsers(username, q);
+  }
+
+  async function handleFriendRequest(targetUsername) {
+    await api.sendFriendRequest(username, targetUsername);
+    await refreshFriends();
+  }
+
+  async function handleFriendRespond(requesterUsername, accept) {
+    await api.respondFriendRequest(username, requesterUsername, accept);
+    await refreshFriends();
+    await refreshFeed();
+  }
+
+  async function handleFriendRemove(targetUsername) {
+    await api.removeFriend(username, targetUsername);
+    await refreshFriends();
+    await refreshFeed();
+  }
+
+  async function handleSubmitPost({ subjectUsername, activityKey, points, caption, photo }) {
+    await api.createPost({ creditedByUsername: username, subjectUsername, activityKey, points, caption, photo });
+    await refreshFeed();
+    const [prog, board] = await Promise.all([api.getProgress(username), api.getLeaderboard()]);
+    setProgress(prog);
+    setLeaderboard(board);
+  }
+
+  async function handleReact(postId, emoji) {
+    await api.reactToPost(postId, username, emoji);
+    await refreshFeed();
+  }
+
+  async function handleSavePost(postId) {
+    await api.savePost(postId, username);
+    await refreshFeed();
   }
 
   if (!username) {
@@ -328,9 +680,15 @@ export default function App() {
       </header>
 
       <XpBar levelInfo={progress.levelInfo} />
+      <PeriodTotals periodTotals={progress.periodTotals} />
+      <StreaksStrip streaks={progress.streaks} activities={activities} />
 
       <nav className="tabs">
         <button className={tab === 'activities' ? 'active' : ''} onClick={() => setTab('activities')}>Activities</button>
+        <button className={tab === 'feed' ? 'active' : ''} onClick={() => setTab('feed')}>Feed</button>
+        <button className={tab === 'friends' ? 'active' : ''} onClick={() => setTab('friends')}>
+          Friends {friendsData?.incomingRequests?.length ? `(${friendsData.incomingRequests.length})` : ''}
+        </button>
         <button className={tab === 'badges' ? 'active' : ''} onClick={() => setTab('badges')}>
           Badges {progress.badges.length ? `(${progress.badges.length})` : ''}
         </button>
@@ -341,9 +699,30 @@ export default function App() {
         {tab === 'activities' && (
           <ActivitiesView
             activities={activities}
-            completedKeys={progress.completedKeys}
+            currentPeriodKeys={progress.currentPeriodKeys}
+            streaks={progress.streaks}
             completedByCategory={progress.completedByCategory}
             onToggle={handleToggle}
+          />
+        )}
+        {tab === 'feed' && (
+          <FeedView
+            feed={feed}
+            friends={friendsData?.friends || []}
+            activities={activities}
+            currentUsername={username}
+            onSubmitPost={handleSubmitPost}
+            onReact={handleReact}
+            onSave={handleSavePost}
+          />
+        )}
+        {tab === 'friends' && (
+          <FriendsView
+            friendsData={friendsData}
+            onSearch={handleFriendSearch}
+            onRequest={handleFriendRequest}
+            onRespond={handleFriendRespond}
+            onRemove={handleFriendRemove}
           />
         )}
         {tab === 'badges' && <BadgesView badges={progress.badges} />}

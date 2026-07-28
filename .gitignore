@@ -4,9 +4,10 @@ node_modules/
 # Build output
 client/dist/
 
-# Runtime data (local dev database)
+# Runtime data (local dev database + uploaded photos)
 server/data.sqlite
 server/data.sqlite-*
+server/uploads/
 
 # Logs
 *.log
