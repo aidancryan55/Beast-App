@@ -27,7 +27,7 @@ function LoginScreen({ onAuth }) {
   return (
     <div className="login-screen">
       <div className="login-card">
-        <div className="login-emoji">🎓🍺🎉</div>
+        <div className="login-emoji">🎓🏆🎉</div>
         <h1>The Beast Game</h1>
         <p className="tagline">Live the cliché. Earn Beast Points. Become a Beast.</p>
         <div className="auth-toggle">
@@ -156,7 +156,7 @@ function QuickLogBar({ activities, currentPeriodKeys, streaks, onToggle }) {
         className="quick-log-input"
         type="text"
         inputMode="search"
-        placeholder="🔍 Type it, tap it, done — e.g. beer"
+        placeholder="🔍 Type it, tap it, done — e.g. tailgate"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -787,7 +787,7 @@ export default function App() {
       </main>
 
       <footer className="app-footer">
-        Play responsibly. Everything here is for laughs — actual drinking activities are only for those of legal age.
+        Everything here is for laughs. Nothing in this app encourages alcohol use — party-related activities are about the memory, not the drink, and any references are intended for those of legal drinking age only.
       </footer>
     </div>
   );
