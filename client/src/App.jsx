@@ -35,9 +35,9 @@ function LoginScreen({ onAuth }) {
         <form onSubmit={submit}>
           <input
             autoFocus
-            placeholder="Nickname"
+            placeholder="Nickname, email, or phone"
             value={name}
-            maxLength={20}
+            maxLength={50}
             onChange={(e) => setName(e.target.value)}
           />
           <input
@@ -51,7 +51,7 @@ function LoginScreen({ onAuth }) {
           </button>
         </form>
         {error && <p className="error">{error}</p>}
-        <p className="fineprint">Your progress shows up on the public leaderboard, so don't use your real name if you'd rather stay anonymous.</p>
+        <p className="fineprint">Whatever you enter here — nickname, email, or phone — is shown publicly on the leaderboard and on posts anyone can see in Discover. Use a nickname instead if you'd rather not share your real contact info.</p>
       </div>
     </div>
   );

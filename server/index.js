@@ -11,7 +11,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const USERNAME_RE = /^[a-zA-Z0-9_ ]{2,20}$/;
+// A signup/login identifier can be a nickname, an email, or a phone number —
+// whichever the user types is stored as-is and used to log back in.
+const NICKNAME_RE = /^[a-zA-Z0-9_ ]{2,20}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const PHONE_RE = /^\+?[0-9()\-.\s]{7,20}$/;
+function isValidIdentifier(value) {
+  return typeof value === 'string' && value.length <= 50
+    && (NICKNAME_RE.test(value) || EMAIL_RE.test(value) || PHONE_RE.test(value));
+}
 const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const GROUP_MAX_MEMBERS = 30;
 
@@ -168,8 +176,8 @@ function serializeGroup(group, viewerUserId) {
 // --- Auth ---
 app.post('/api/signup', (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !USERNAME_RE.test(username)) {
-    return res.status(400).json({ error: 'Nickname must be 2-20 characters (letters, numbers, spaces, underscores).' });
+  if (!username || !isValidIdentifier(username)) {
+    return res.status(400).json({ error: 'Enter a nickname, email, or phone number.' });
   }
   if (!password || password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters.' });
