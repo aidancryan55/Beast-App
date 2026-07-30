@@ -63,13 +63,6 @@ function requireAuth(req, res, next) {
   req.authToken = token;
   next();
 }
-function requireSelf(req, res, next) {
-  if (req.authUser.username.toLowerCase() !== req.params.username.toLowerCase()) {
-    return res.status(403).json({ error: "You can't do that for another user" });
-  }
-  next();
-}
-
 function levelForXp(xp) {
   let current = LEVELS[0];
   for (const lvl of LEVELS) {
@@ -89,39 +82,6 @@ function levelForXp(xp) {
 
 function getUserByUsername(username) {
   return db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-}
-
-// --- Repeatable-activity period keys ---
-// 'daily' periods are calendar dates; 'weekly' periods are consecutive 7-day
-// buckets since the epoch (not calendar weeks — just needs to be stable and
-// consecutive for streak math, nobody sees the raw key).
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-function dayIndex(dateStr) {
-  return Math.floor(Date.parse(`${dateStr}T00:00:00Z`) / 86400000);
-}
-function periodKeyFor(repeatable) {
-  if (repeatable === 'daily') return todayStr();
-  if (repeatable === 'weekly') return `W${Math.floor(dayIndex(todayStr()) / 7)}`;
-  return 'once';
-}
-function periodSortValue(periodKey, repeatable) {
-  if (repeatable === 'daily') return /^\d{4}-\d{2}-\d{2}$/.test(periodKey) ? dayIndex(periodKey) : null;
-  if (repeatable === 'weekly') return /^W\d+$/.test(periodKey) ? parseInt(periodKey.slice(1), 10) : null;
-  return null;
-}
-function computeStreak(periodKeys, repeatable) {
-  const values = [...new Set(periodKeys.map((k) => periodSortValue(k, repeatable)))]
-    .filter((v) => v !== null)
-    .sort((a, b) => a - b);
-  if (!values.length) return 0;
-  let streak = 1;
-  for (let i = values.length - 1; i > 0; i--) {
-    if (values[i] - values[i - 1] === 1) streak++;
-    else break;
-  }
-  return streak;
 }
 
 // --- Time-bucketed point totals (today / this week / this month / this year) ---
@@ -150,16 +110,8 @@ function computePeriodTotals(events) {
 }
 
 function computeUserStats(userId) {
-  const completions = db.prepare(`
-    SELECT a.id, a.key, a.name, a.category, a.xp, a.rarity, a.icon, a.repeatable, c.period_key, c.completed_at
-    FROM completions c JOIN activities a ON a.id = c.activity_id
-    WHERE c.user_id = ?
-    ORDER BY c.completed_at ASC
-  `).all(userId);
-
-  // Points from photo-credited posts now come from post_credits (many possible
-  // awarders per post, not just the original poster), so pull each individual
-  // credit as its own point event rather than trusting a single fixed value.
+  // Points from photo-credited posts come from post_credits (many possible
+  // awarders per post), so pull each individual credit as its own point event.
   const postCredits = db.prepare(`
     SELECT pc.points, pc.created_at, pc.post_id
     FROM post_credits pc
@@ -168,96 +120,27 @@ function computeUserStats(userId) {
   `).all(userId);
   const creditedPostIds = new Set(postCredits.map((c) => c.post_id));
 
-  const totalXp = completions.reduce((sum, c) => sum + c.xp, 0) + postCredits.reduce((sum, c) => sum + c.points, 0);
+  const totalXp = postCredits.reduce((sum, c) => sum + c.points, 0);
   const levelInfo = levelForXp(totalXp);
 
-  const pointEvents = [
-    ...completions.map((c) => ({ points: c.xp, earnedAt: c.completed_at })),
-    ...postCredits.map((c) => ({ points: c.points, earnedAt: c.created_at })),
-  ];
-  const periodTotals = computePeriodTotals(pointEvents);
+  const periodTotals = computePeriodTotals(postCredits.map((c) => ({ points: c.points, earnedAt: c.created_at })));
 
-  const allActivities = db.prepare('SELECT * FROM activities').all();
-  const categories = [...new Set(allActivities.map((a) => a.category))];
-
-  const completedKeys = [...new Set(completions.map((c) => c.key))];
-  const completedSet = new Set(completedKeys);
-
-  const completedByCategory = {};
-  for (const cat of categories) {
-    const total = allActivities.filter((a) => a.category === cat).length;
-    const done = allActivities.filter((a) => a.category === cat && completedSet.has(a.key)).length;
-    completedByCategory[cat] = { done, total, complete: done === total };
-  }
-
-  // Streaks + "done for the current period" state, per repeatable activity.
-  const periodKeysByActivity = {};
-  for (const c of completions) {
-    if (!c.repeatable) continue;
-    (periodKeysByActivity[c.key] ||= []).push(c.period_key);
-  }
-  const streaks = {};
-  const currentPeriodKeys = new Set();
-  for (const a of allActivities) {
-    if (a.repeatable) {
-      const keys = periodKeysByActivity[a.key] || [];
-      const streak = computeStreak(keys, a.repeatable);
-      if (streak > 0) streaks[a.key] = streak;
-      if (keys.includes(periodKeyFor(a.repeatable))) currentPeriodKeys.add(a.key);
-    } else if (completedSet.has(a.key)) {
-      currentPeriodKeys.add(a.key);
-    }
-  }
-  const bestStreak = Object.values(streaks).reduce((max, s) => Math.max(max, s), 0);
+  const creditsGivenCount = db.prepare(`
+    SELECT COUNT(DISTINCT post_id) as n FROM post_credits WHERE awarder_user_id = ?
+  `).get(userId).n;
 
   const badges = [];
-  if (completions.length >= 1) badges.push({ key: 'first_timer', name: 'First Timer', icon: '⭐', desc: 'Completed your first activity' });
-  if (completedKeys.length >= 10) badges.push({ key: 'ten_down', name: 'Double Digits', icon: '🔟', desc: 'Completed 10 different activities' });
-  if (completedKeys.length >= 20) badges.push({ key: 'twenty_down', name: 'Overachiever', icon: '💯', desc: 'Completed 20 different activities' });
-  if (bestStreak >= 3) badges.push({ key: 'on_a_roll', name: 'On a Roll', icon: '🔥', desc: 'Hit a 3+ streak on a repeatable habit' });
-  if (bestStreak >= 7) badges.push({ key: 'unstoppable', name: 'Unstoppable', icon: '🔥🔥', desc: 'Hit a 7+ streak on a repeatable habit' });
-  if (completions.some((c) => c.rarity === 'legendary')) badges.push({ key: 'legendary', name: 'Legendary', icon: '🏅', desc: 'Completed a legendary activity' });
-  if (completedSet.has('join_frat_sorority')) badges.push({ key: 'greek', name: 'Greek Icon', icon: '🏛️', desc: 'Joined a fraternity/sorority' });
-  for (const cat of categories) {
-    if (completedByCategory[cat].complete) {
-      badges.push({ key: `cat_${cat}`, name: `${cat} Champion`, icon: '🎯', desc: `Completed every ${cat} activity` });
-    }
-  }
-  if (allActivities.length && completedKeys.length === allActivities.length) {
-    badges.push({ key: 'blackout', name: 'Full Send', icon: '👑', desc: 'Completed every single activity' });
-  }
   if (creditedPostIds.size >= 1) badges.push({ key: 'witnessed', name: 'Witnessed', icon: '📸', desc: 'Got credited with photo proof' });
   if (creditedPostIds.size >= 10) badges.push({ key: 'certified', name: 'Certified Beast', icon: '🎥', desc: 'Got credited on 10 different posts' });
+  if (creditsGivenCount >= 5) badges.push({ key: 'talent_scout', name: 'Talent Scout', icon: '🔭', desc: 'Credited 5+ different posts' });
 
   return {
     totalXp,
     levelInfo,
-    completedKeys,
-    currentPeriodKeys: [...currentPeriodKeys],
-    streaks,
-    completions,
-    completedByCategory,
     badges,
     periodTotals,
     creditedPostCount: creditedPostIds.size,
   };
-}
-
-// --- Friends ---
-function areFriends(userIdA, userIdB) {
-  const row = db.prepare(`
-    SELECT 1 FROM friendships
-    WHERE status = 'accepted'
-      AND ((requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?))
-  `).get(userIdA, userIdB, userIdB, userIdA);
-  return !!row;
-}
-function getFriendIds(userId) {
-  const rows = db.prepare(`
-    SELECT requester_id, addressee_id FROM friendships
-    WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)
-  `).all(userId, userId);
-  return rows.map((r) => (r.requester_id === userId ? r.addressee_id : r.requester_id));
 }
 
 // --- Groups ---
@@ -340,24 +223,6 @@ app.get('/api/users/:username/progress', (req, res) => {
   res.json(computeUserStats(user.id));
 });
 
-// --- Toggle completion ---
-app.post('/api/users/:username/toggle', requireAuth, requireSelf, (req, res) => {
-  const user = getUserByUsername(req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const { activityKey } = req.body || {};
-  const activity = db.prepare('SELECT * FROM activities WHERE key = ?').get(activityKey);
-  if (!activity) return res.status(404).json({ error: 'Activity not found' });
-
-  const periodKey = periodKeyFor(activity.repeatable);
-  const existing = db.prepare('SELECT * FROM completions WHERE user_id = ? AND activity_id = ? AND period_key = ?').get(user.id, activity.id, periodKey);
-  if (existing) {
-    db.prepare('DELETE FROM completions WHERE id = ?').run(existing.id);
-  } else {
-    db.prepare('INSERT INTO completions (user_id, activity_id, period_key) VALUES (?, ?, ?)').run(user.id, activity.id, periodKey);
-  }
-  res.json(computeUserStats(user.id));
-});
-
 // --- Leaderboard ---
 app.get('/api/leaderboard', (req, res) => {
   const users = db.prepare('SELECT id, username FROM users').all();
@@ -369,7 +234,7 @@ app.get('/api/leaderboard', (req, res) => {
         totalXp: stats.totalXp,
         level: stats.levelInfo.level,
         title: stats.levelInfo.title,
-        activitiesCompleted: stats.completedKeys.length,
+        creditedPostCount: stats.creditedPostCount,
         badgeCount: stats.badges.length,
       };
     })
@@ -378,24 +243,7 @@ app.get('/api/leaderboard', (req, res) => {
   res.json(board);
 });
 
-// --- Friends ---
-app.get('/api/users/:username/friends', (req, res) => {
-  const user = getUserByUsername(req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const friends = getFriendIds(user.id).map((id) => db.prepare('SELECT username FROM users WHERE id = ?').get(id).username);
-  const incoming = db.prepare(`
-    SELECT u.username FROM friendships f JOIN users u ON u.id = f.requester_id
-    WHERE f.addressee_id = ? AND f.status = 'pending'
-  `).all(user.id).map((r) => r.username);
-  const outgoing = db.prepare(`
-    SELECT u.username FROM friendships f JOIN users u ON u.id = f.addressee_id
-    WHERE f.requester_id = ? AND f.status = 'pending'
-  `).all(user.id).map((r) => r.username);
-
-  res.json({ friends, incomingRequests: incoming, outgoingRequests: outgoing });
-});
-
+// Used by the "who's the beast?" search when posting publicly (any user, no friend graph needed).
 app.get('/api/users/:username/search', (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -405,62 +253,6 @@ app.get('/api/users/:username/search', (req, res) => {
     SELECT username FROM users WHERE username LIKE ? AND id != ? LIMIT 10
   `).all(`%${q}%`, user.id).map((r) => r.username);
   res.json(results);
-});
-
-app.post('/api/users/:username/friends/request', requireAuth, requireSelf, (req, res) => {
-  const user = getUserByUsername(req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const target = getUserByUsername((req.body || {}).targetUsername);
-  if (!target) return res.status(404).json({ error: 'That user does not exist' });
-  if (target.id === user.id) return res.status(400).json({ error: "You can't friend yourself" });
-  if (areFriends(user.id, target.id)) return res.status(400).json({ error: 'Already friends' });
-
-  const reverseRequest = db.prepare(`
-    SELECT * FROM friendships WHERE requester_id = ? AND addressee_id = ? AND status = 'pending'
-  `).get(target.id, user.id);
-  if (reverseRequest) {
-    db.prepare(`UPDATE friendships SET status = 'accepted' WHERE id = ?`).run(reverseRequest.id);
-    return res.json({ status: 'accepted' });
-  }
-
-  const existing = db.prepare(`SELECT * FROM friendships WHERE requester_id = ? AND addressee_id = ?`).get(user.id, target.id);
-  if (existing) return res.status(400).json({ error: 'Request already sent' });
-
-  db.prepare(`INSERT INTO friendships (requester_id, addressee_id, status) VALUES (?, ?, 'pending')`).run(user.id, target.id);
-  res.json({ status: 'pending' });
-});
-
-app.post('/api/users/:username/friends/respond', requireAuth, requireSelf, (req, res) => {
-  const user = getUserByUsername(req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const requester = getUserByUsername((req.body || {}).requesterUsername);
-  if (!requester) return res.status(404).json({ error: 'That user does not exist' });
-  const { accept } = req.body || {};
-
-  const row = db.prepare(`
-    SELECT * FROM friendships WHERE requester_id = ? AND addressee_id = ? AND status = 'pending'
-  `).get(requester.id, user.id);
-  if (!row) return res.status(404).json({ error: 'No pending request from that user' });
-
-  if (accept) {
-    db.prepare(`UPDATE friendships SET status = 'accepted' WHERE id = ?`).run(row.id);
-  } else {
-    db.prepare(`DELETE FROM friendships WHERE id = ?`).run(row.id);
-  }
-  res.json({ status: accept ? 'accepted' : 'declined' });
-});
-
-app.post('/api/users/:username/friends/remove', requireAuth, requireSelf, (req, res) => {
-  const user = getUserByUsername(req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const target = getUserByUsername((req.body || {}).targetUsername);
-  if (!target) return res.status(404).json({ error: 'That user does not exist' });
-
-  db.prepare(`
-    DELETE FROM friendships
-    WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)
-  `).run(user.id, target.id, target.id, user.id);
-  res.json({ status: 'removed' });
 });
 
 // --- Groups ---
@@ -652,24 +444,6 @@ app.post('/api/posts/:postId/credit', requireAuth, (req, res) => {
   `).run(post.id, user.id, points);
 
   res.json(serializePost(getPostRow(post.id), user.id));
-});
-
-// "Friends" feed: public posts involving people you're friends with (or you).
-app.get('/api/users/:username/feed', (req, res) => {
-  const user = getUserByUsername(req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const visibleIds = [user.id, ...getFriendIds(user.id)];
-  const placeholders = visibleIds.map(() => '?').join(',');
-  const rows = db.prepare(`
-    ${POST_JOIN_SQL}
-    WHERE p.visibility = 'public' AND (p.subject_user_id IN (${placeholders}) OR p.credited_by_user_id IN (${placeholders}))
-    ORDER BY p.created_at DESC
-    LIMIT 100
-  `).all(...visibleIds, ...visibleIds);
-
-  const posts = rows.map((r) => serializePost(r, user.id)).filter((p) => !p.expired);
-  res.json(posts);
 });
 
 // Discover: every public post, unfiltered by friendship.

@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './api';
 import './App.css';
-
-const RARITY_ORDER = { common: 0, uncommon: 1, rare: 2, legendary: 3 };
 
 function LoginScreen({ onAuth }) {
   const [mode, setMode] = useState('login');
@@ -29,7 +27,7 @@ function LoginScreen({ onAuth }) {
       <div className="login-card">
         <div className="login-emoji">🎓🏆🎉</div>
         <h1>The Beast Game</h1>
-        <p className="tagline">Live the cliché. Earn Beast Points. Become a Beast.</p>
+        <p className="tagline">Catch your friends being beasts. Earn Beast Points. Become a Beast.</p>
         <div className="auth-toggle">
           <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Log In</button>
           <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Sign Up</button>
@@ -81,179 +79,6 @@ function XpBar({ levelInfo }) {
   );
 }
 
-function RarityBadge({ rarity }) {
-  return <span className={`rarity rarity-${rarity}`}>{rarity}</span>;
-}
-
-function FrequencyBadge({ repeatable }) {
-  if (!repeatable) return null;
-  return <span className={`frequency frequency-${repeatable}`}>{repeatable}</span>;
-}
-
-function StreakBadge({ streak }) {
-  if (!streak) return null;
-  return <span className="streak-pill">🔥 {streak}</span>;
-}
-
-function ActivityCard({ activity, completed, streak, onToggle }) {
-  return (
-    <button
-      className={`activity-card ${completed ? 'completed' : ''}`}
-      onClick={() => onToggle(activity.key)}
-    >
-      <span className="activity-icon">{activity.icon}</span>
-      <span className="activity-body">
-        <span className="activity-name">{activity.name}</span>
-        <span className="activity-meta">
-          <RarityBadge rarity={activity.rarity} />
-          <FrequencyBadge repeatable={activity.repeatable} />
-          <span className="activity-xp">+{activity.xp} BP</span>
-          <StreakBadge streak={streak} />
-        </span>
-      </span>
-      <span className="activity-check">{completed ? '✓' : ''}</span>
-    </button>
-  );
-}
-
-function QuickLogBar({ activities, currentPeriodKeys, streaks, onToggle }) {
-  const [query, setQuery] = useState('');
-  const inputRef = useRef(null);
-  const completedSet = new Set(currentPeriodKeys);
-
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return activities
-      .filter((a) => a.name.toLowerCase().includes(q) || a.category.toLowerCase().includes(q))
-      .sort((a, b) => {
-        const aStarts = a.name.toLowerCase().startsWith(q) ? 0 : 1;
-        const bStarts = b.name.toLowerCase().startsWith(q) ? 0 : 1;
-        return aStarts - bStarts;
-      })
-      .slice(0, 6);
-  }, [query, activities]);
-
-  function logAndClear(activityKey) {
-    onToggle(activityKey);
-    setQuery('');
-    inputRef.current?.focus();
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && matches.length > 0) {
-      logAndClear(matches[0].key);
-    }
-    if (e.key === 'Escape') {
-      setQuery('');
-    }
-  }
-
-  return (
-    <div className="quick-log">
-      <input
-        ref={inputRef}
-        className="quick-log-input"
-        type="text"
-        inputMode="search"
-        placeholder="🔍 Type it, tap it, done — e.g. tailgate"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={handleKeyDown}
-      />
-      {matches.length > 0 && (
-        <div className="quick-log-results">
-          {matches.map((a) => {
-            const completed = completedSet.has(a.key);
-            const streak = streaks?.[a.key];
-            return (
-              <button
-                key={a.key}
-                className={`quick-log-result ${completed ? 'completed' : ''}`}
-                onClick={() => logAndClear(a.key)}
-              >
-                <span className="activity-icon">{a.icon}</span>
-                <span className="activity-name">{a.name}</span>
-                {streak > 0 && <span className="streak-pill">🔥 {streak}</span>}
-                <span className="activity-xp">+{a.xp} BP</span>
-                <span className="activity-check">{completed ? '✓' : ''}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ActivitiesView({ activities, currentPeriodKeys, streaks, onToggle, completedByCategory }) {
-  const byCategory = useMemo(() => {
-    const map = {};
-    for (const a of activities) {
-      if (!map[a.category]) map[a.category] = [];
-      map[a.category].push(a);
-    }
-    for (const cat of Object.keys(map)) {
-      map[cat].sort((a, b) => RARITY_ORDER[a.rarity] - RARITY_ORDER[b.rarity]);
-    }
-    return map;
-  }, [activities]);
-
-  const completedSet = new Set(currentPeriodKeys);
-
-  return (
-    <div className="activities-view">
-      <QuickLogBar activities={activities} currentPeriodKeys={currentPeriodKeys} streaks={streaks} onToggle={onToggle} />
-      {Object.entries(byCategory).map(([category, items]) => {
-        const prog = completedByCategory?.[category];
-        return (
-          <section key={category} className="category-section">
-            <div className="category-header">
-              <h2>{category}</h2>
-              {prog && (
-                <span className={`category-progress ${prog.complete ? 'done' : ''}`}>
-                  {prog.done}/{prog.total} {prog.complete ? '✓' : ''}
-                </span>
-              )}
-            </div>
-            <div className="activity-grid">
-              {items.map((a) => (
-                <ActivityCard
-                  key={a.key}
-                  activity={a}
-                  completed={completedSet.has(a.key)}
-                  streak={streaks?.[a.key]}
-                  onToggle={onToggle}
-                />
-              ))}
-            </div>
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-function StreaksStrip({ streaks, activities }) {
-  const entries = Object.entries(streaks || {}).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return null;
-  const byKey = Object.fromEntries(activities.map((a) => [a.key, a]));
-  return (
-    <div className="streaks-strip">
-      {entries.map(([key, count]) => {
-        const a = byKey[key];
-        if (!a) return null;
-        const unit = a.repeatable === 'daily' ? 'day' : 'week';
-        return (
-          <span key={key} className="streak-chip">
-            🔥 {count} {unit}{count === 1 ? '' : 's'} · {a.name}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 function PeriodTotals({ periodTotals }) {
   if (!periodTotals) return null;
   const rows = [
@@ -274,114 +99,8 @@ function PeriodTotals({ periodTotals }) {
   );
 }
 
-function FriendsView({ friendsData, onSearch, onRequest, onRespond, onRemove, feed, myGroups, activities, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers }) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
-  const [showForm, setShowForm] = useState(false);
-
-  async function runSearch(q) {
-    setQuery(q);
-    if (q.trim().length < 1) {
-      setResults([]);
-      return;
-    }
-    setResults(await onSearch(q.trim()));
-  }
-
-  const { friends = [], incomingRequests = [], outgoingRequests = [] } = friendsData || {};
-  const pendingSet = new Set([...friends, ...incomingRequests, ...outgoingRequests]);
-
-  return (
-    <div className="friends-view">
-      <div className="friend-search">
-        <input
-          placeholder="Search by nickname to add a friend"
-          value={query}
-          onChange={(e) => runSearch(e.target.value)}
-        />
-        {results.length > 0 && (
-          <div className="friend-search-results">
-            {results.map((name) => (
-              <div key={name} className="friend-row">
-                <span>{name}</span>
-                {pendingSet.has(name) ? (
-                  <span className="friend-status">pending / friends</span>
-                ) : (
-                  <button className="friend-action" onClick={() => onRequest(name)}>Add</button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {incomingRequests.length > 0 && (
-        <section className="friend-section">
-          <h2>Requests</h2>
-          {incomingRequests.map((name) => (
-            <div key={name} className="friend-row">
-              <span>{name}</span>
-              <div className="friend-row-actions">
-                <button className="friend-action accept" onClick={() => onRespond(name, true)}>Accept</button>
-                <button className="friend-action decline" onClick={() => onRespond(name, false)}>Decline</button>
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
-
-      {outgoingRequests.length > 0 && (
-        <section className="friend-section">
-          <h2>Sent</h2>
-          {outgoingRequests.map((name) => (
-            <div key={name} className="friend-row">
-              <span>{name}</span>
-              <span className="friend-status">pending</span>
-            </div>
-          ))}
-        </section>
-      )}
-
-      <section className="friend-section">
-        <h2>Friends ({friends.length})</h2>
-        {friends.length === 0 && <div className="empty-state">No friends yet — search above to add some.</div>}
-        {friends.map((name) => (
-          <div key={name} className="friend-row">
-            <span>{name}</span>
-            <button className="friend-action remove" onClick={() => onRemove(name)}>Remove</button>
-          </div>
-        ))}
-      </section>
-
-      <button className="credit-friend-btn" onClick={() => setShowForm(true)}>📸 Catch a Beast</button>
-      {showForm && (
-        <CreatePostForm
-          myGroups={myGroups}
-          activities={activities}
-          currentUsername={currentUsername}
-          onSubmit={onSubmitPost}
-          onClose={() => setShowForm(false)}
-          onSearchUsers={onSearchUsers}
-        />
-      )}
-
-      <section className="friend-section">
-        <h2>Friends Feed</h2>
-        <PostList
-          posts={feed}
-          currentUsername={currentUsername}
-          onReact={onReact}
-          onSave={onSave}
-          onCredit={onCredit}
-          emptyText="No posts from your friends yet."
-        />
-      </section>
-    </div>
-  );
-}
-
 function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClose, onSearchUsers, fixedGroupId }) {
-  const [destination, setDestination] = useState(fixedGroupId ? 'group' : (myGroups.length ? 'public' : 'public'));
+  const [destination, setDestination] = useState(fixedGroupId ? 'group' : 'public');
   const [groupId, setGroupId] = useState(fixedGroupId || myGroups[0]?.id || '');
   const [subjectUsername, setSubjectUsername] = useState('');
   const [subjectQuery, setSubjectQuery] = useState('');
@@ -772,7 +491,7 @@ function GroupsView({ myGroups, discoverGroups, onSearchGroups, onCreateGroup, o
 
 function BadgesView({ badges }) {
   if (!badges.length) {
-    return <div className="empty-state">No badges yet — go complete some cliches to earn your first one.</div>;
+    return <div className="empty-state">No badges yet — catch a beast or get caught being one.</div>;
   }
   return (
     <div className="badges-grid">
@@ -797,7 +516,7 @@ function LeaderboardView({ leaderboard, currentUsername }) {
             <th>Player</th>
             <th>Level</th>
             <th>BP</th>
-            <th>Activities</th>
+            <th>Posts</th>
             <th>Badges</th>
           </tr>
         </thead>
@@ -808,7 +527,7 @@ function LeaderboardView({ leaderboard, currentUsername }) {
               <td>{row.username}</td>
               <td>{row.title} <span className="lvl-num">(Lv {row.level})</span></td>
               <td>{row.totalXp}</td>
-              <td>{row.activitiesCompleted}</td>
+              <td>{row.creditedPostCount}</td>
               <td>{row.badgeCount}</td>
             </tr>
           ))}
@@ -840,15 +559,13 @@ export default function App() {
   const [activities, setActivities] = useState([]);
   const [progress, setProgress] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
-  const [friendsData, setFriendsData] = useState(null);
-  const [feed, setFeed] = useState([]);
   const [discoverFeed, setDiscoverFeed] = useState([]);
   const [groups, setGroups] = useState([]);
   const [discoverGroupsList, setDiscoverGroupsList] = useState([]);
   const [groupSearchQuery, setGroupSearchQuery] = useState('');
   const [activeGroupId, setActiveGroupId] = useState(null);
   const [groupFeed, setGroupFeed] = useState([]);
-  const [tab, setTab] = useState('activities');
+  const [tab, setTab] = useState('discover');
   const [loadError, setLoadError] = useState('');
 
   async function handleAuth(mode, name, password) {
@@ -882,20 +599,16 @@ export default function App() {
 
   async function refreshAll() {
     try {
-      const [acts, prog, board, friendsRes, feedRes, discoverRes, groupsRes] = await Promise.all([
+      const [acts, prog, board, discoverRes, groupsRes] = await Promise.all([
         api.getActivities(),
         api.getProgress(username),
         api.getLeaderboard(),
-        api.getFriends(username),
-        api.getFeed(username),
         api.getDiscover(username),
         api.getGroups(username),
       ]);
       setActivities(acts);
       setProgress(prog);
       setLeaderboard(board);
-      setFriendsData(friendsRes);
-      setFeed(feedRes);
       setDiscoverFeed(discoverRes);
       setGroups(groupsRes);
     } catch (err) {
@@ -905,14 +618,6 @@ export default function App() {
       }
       setLoadError(err.message);
     }
-  }
-
-  async function refreshFriends() {
-    setFriendsData(await api.getFriends(username));
-  }
-
-  async function refreshFeed() {
-    setFeed(await api.getFeed(username));
   }
 
   async function refreshDiscover() {
@@ -932,44 +637,8 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username]);
 
-  async function handleToggle(activityKey) {
-    await withAuthGuard(async () => {
-      const updated = await api.toggleActivity(username, activityKey);
-      setProgress(updated);
-      const board = await api.getLeaderboard();
-      setLeaderboard(board);
-    });
-  }
-
-  async function handleFriendSearch(q) {
-    return api.searchUsers(username, q);
-  }
-
-  async function handleFriendRequest(targetUsername) {
-    await withAuthGuard(async () => {
-      await api.sendFriendRequest(username, targetUsername);
-      await refreshFriends();
-    });
-  }
-
-  async function handleFriendRespond(requesterUsername, accept) {
-    await withAuthGuard(async () => {
-      await api.respondFriendRequest(username, requesterUsername, accept);
-      await refreshFriends();
-      await refreshFeed();
-    });
-  }
-
-  async function handleFriendRemove(targetUsername) {
-    await withAuthGuard(async () => {
-      await api.removeFriend(username, targetUsername);
-      await refreshFriends();
-      await refreshFeed();
-    });
-  }
-
   async function refreshVisibleFeeds() {
-    const jobs = [refreshFeed(), refreshDiscover()];
+    const jobs = [refreshDiscover()];
     if (activeGroupId) jobs.push(refreshGroupFeed(activeGroupId));
     await Promise.all(jobs);
   }
@@ -1065,13 +734,8 @@ export default function App() {
 
       <XpBar levelInfo={progress.levelInfo} />
       <PeriodTotals periodTotals={progress.periodTotals} />
-      <StreaksStrip streaks={progress.streaks} activities={activities} />
 
       <nav className="tabs">
-        <button className={tab === 'activities' ? 'active' : ''} onClick={() => setTab('activities')}>Activities</button>
-        <button className={tab === 'friends' ? 'active' : ''} onClick={() => setTab('friends')}>
-          Friends {friendsData?.incomingRequests?.length ? `(${friendsData.incomingRequests.length})` : ''}
-        </button>
         <button className={tab === 'discover' ? 'active' : ''} onClick={() => setTab('discover')}>Discover</button>
         <button className={tab === 'groups' ? 'active' : ''} onClick={() => { setTab('groups'); setActiveGroupId(null); }}>Groups</button>
         <button className={tab === 'badges' ? 'active' : ''} onClick={() => setTab('badges')}>
@@ -1081,33 +745,6 @@ export default function App() {
       </nav>
 
       <main className="app-main">
-        {tab === 'activities' && (
-          <ActivitiesView
-            activities={activities}
-            currentPeriodKeys={progress.currentPeriodKeys}
-            streaks={progress.streaks}
-            completedByCategory={progress.completedByCategory}
-            onToggle={handleToggle}
-          />
-        )}
-        {tab === 'friends' && (
-          <FriendsView
-            friendsData={friendsData}
-            onSearch={handleFriendSearch}
-            onRequest={handleFriendRequest}
-            onRespond={handleFriendRespond}
-            onRemove={handleFriendRemove}
-            feed={feed}
-            myGroups={groups}
-            activities={activities}
-            currentUsername={username}
-            onSubmitPost={handleSubmitPost}
-            onReact={handleReact}
-            onSave={handleSavePost}
-            onCredit={handleCreditPost}
-            onSearchUsers={handleSearchUsers}
-          />
-        )}
         {tab === 'discover' && (
           <DiscoverView
             discoverFeed={discoverFeed}

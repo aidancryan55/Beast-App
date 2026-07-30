@@ -40,20 +40,9 @@ export const api = {
 
   getActivities: () => req('/activities'),
   getProgress: (username) => req(`/users/${encodeURIComponent(username)}/progress`),
-  toggleActivity: (username, activityKey) =>
-    req(`/users/${encodeURIComponent(username)}/toggle`, { method: 'POST', body: JSON.stringify({ activityKey }) }),
   getLeaderboard: () => req('/leaderboard'),
 
-  getFriends: (username) => req(`/users/${encodeURIComponent(username)}/friends`),
   searchUsers: (username, q) => req(`/users/${encodeURIComponent(username)}/search?q=${encodeURIComponent(q)}`),
-  sendFriendRequest: (username, targetUsername) =>
-    req(`/users/${encodeURIComponent(username)}/friends/request`, { method: 'POST', body: JSON.stringify({ targetUsername }) }),
-  respondFriendRequest: (username, requesterUsername, accept) =>
-    req(`/users/${encodeURIComponent(username)}/friends/respond`, { method: 'POST', body: JSON.stringify({ requesterUsername, accept }) }),
-  removeFriend: (username, targetUsername) =>
-    req(`/users/${encodeURIComponent(username)}/friends/remove`, { method: 'POST', body: JSON.stringify({ targetUsername }) }),
-
-  getFeed: (username) => req(`/users/${encodeURIComponent(username)}/feed`),
   getDiscover: (username) => req(`/users/${encodeURIComponent(username)}/discover`),
 
   getGroups: (username) => req(`/users/${encodeURIComponent(username)}/groups`),
