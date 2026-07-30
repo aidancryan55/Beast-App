@@ -54,11 +54,21 @@ db.exec(`
     subject_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     credited_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     activity_id INTEGER REFERENCES activities(id) ON DELETE SET NULL,
-    points INTEGER NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'public',
+    group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
     photo_filename TEXT NOT NULL,
     caption TEXT,
     saved INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS post_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    awarder_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    points INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(post_id, awarder_user_id)
   );
 
   CREATE TABLE IF NOT EXISTS reactions (
@@ -68,6 +78,22 @@ db.exec(`
     emoji TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(post_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(group_id, user_id)
   );
 `);
 
@@ -81,6 +107,26 @@ if (!userCols.includes('password_hash')) {
 const activityCols = db.prepare('PRAGMA table_info(activities)').all().map((c) => c.name);
 if (!activityCols.includes('repeatable')) {
   db.exec('ALTER TABLE activities ADD COLUMN repeatable TEXT');
+}
+
+// --- Migrations for databases created before groups/crowd-sourced credits existed ---
+const postCols = db.prepare('PRAGMA table_info(posts)').all().map((c) => c.name);
+if (postCols.length) {
+  if (!postCols.includes('visibility')) {
+    db.exec(`ALTER TABLE posts ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`);
+  }
+  if (!postCols.includes('group_id')) {
+    db.exec('ALTER TABLE posts ADD COLUMN group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE');
+  }
+  // Old posts stored a single fixed `points` value with no post_credits row.
+  // Backfill one post_credits row per legacy post so totals still add up under the new model.
+  if (postCols.includes('points')) {
+    db.exec(`
+      INSERT OR IGNORE INTO post_credits (post_id, awarder_user_id, points, created_at)
+      SELECT id, credited_by_user_id, points, created_at FROM posts
+      WHERE points IS NOT NULL
+    `);
+  }
 }
 
 const completionCols = db.prepare('PRAGMA table_info(completions)').all().map((c) => c.name);

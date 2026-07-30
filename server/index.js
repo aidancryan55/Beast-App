@@ -13,6 +13,7 @@ app.use(express.json());
 
 const USERNAME_RE = /^[a-zA-Z0-9_ ]{2,20}$/;
 const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const GROUP_MAX_MEMBERS = 30;
 
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -156,16 +157,23 @@ function computeUserStats(userId) {
     ORDER BY c.completed_at ASC
   `).all(userId);
 
-  const creditedPosts = db.prepare(`
-    SELECT points, created_at FROM posts WHERE subject_user_id = ?
+  // Points from photo-credited posts now come from post_credits (many possible
+  // awarders per post, not just the original poster), so pull each individual
+  // credit as its own point event rather than trusting a single fixed value.
+  const postCredits = db.prepare(`
+    SELECT pc.points, pc.created_at, pc.post_id
+    FROM post_credits pc
+    JOIN posts p ON p.id = pc.post_id
+    WHERE p.subject_user_id = ?
   `).all(userId);
+  const creditedPostIds = new Set(postCredits.map((c) => c.post_id));
 
-  const totalXp = completions.reduce((sum, c) => sum + c.xp, 0) + creditedPosts.reduce((sum, p) => sum + p.points, 0);
+  const totalXp = completions.reduce((sum, c) => sum + c.xp, 0) + postCredits.reduce((sum, c) => sum + c.points, 0);
   const levelInfo = levelForXp(totalXp);
 
   const pointEvents = [
     ...completions.map((c) => ({ points: c.xp, earnedAt: c.completed_at })),
-    ...creditedPosts.map((p) => ({ points: p.points, earnedAt: p.created_at })),
+    ...postCredits.map((c) => ({ points: c.points, earnedAt: c.created_at })),
   ];
   const periodTotals = computePeriodTotals(pointEvents);
 
@@ -218,8 +226,8 @@ function computeUserStats(userId) {
   if (allActivities.length && completedKeys.length === allActivities.length) {
     badges.push({ key: 'blackout', name: 'Full Send', icon: '👑', desc: 'Completed every single activity' });
   }
-  if (creditedPosts.length >= 1) badges.push({ key: 'witnessed', name: 'Witnessed', icon: '📸', desc: 'Got credited by a friend with photo proof' });
-  if (creditedPosts.length >= 10) badges.push({ key: 'certified', name: 'Certified Beast', icon: '🎥', desc: 'Got credited 10 times by friends' });
+  if (creditedPostIds.size >= 1) badges.push({ key: 'witnessed', name: 'Witnessed', icon: '📸', desc: 'Got credited with photo proof' });
+  if (creditedPostIds.size >= 10) badges.push({ key: 'certified', name: 'Certified Beast', icon: '🎥', desc: 'Got credited on 10 different posts' });
 
   return {
     totalXp,
@@ -231,7 +239,7 @@ function computeUserStats(userId) {
     completedByCategory,
     badges,
     periodTotals,
-    creditedPostCount: creditedPosts.length,
+    creditedPostCount: creditedPostIds.size,
   };
 }
 
@@ -250,6 +258,28 @@ function getFriendIds(userId) {
     WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)
   `).all(userId, userId);
   return rows.map((r) => (r.requester_id === userId ? r.addressee_id : r.requester_id));
+}
+
+// --- Groups ---
+function isGroupMember(groupId, userId) {
+  return !!db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(groupId, userId);
+}
+function getGroupMemberIds(groupId) {
+  return db.prepare('SELECT user_id FROM group_members WHERE group_id = ?').all(groupId).map((r) => r.user_id);
+}
+function serializeGroup(group, viewerUserId) {
+  const memberIds = getGroupMemberIds(group.id);
+  const members = memberIds.map((id) => db.prepare('SELECT username FROM users WHERE id = ?').get(id)?.username).filter(Boolean);
+  return {
+    id: group.id,
+    name: group.name,
+    description: group.description,
+    memberCount: memberIds.length,
+    maxMembers: GROUP_MAX_MEMBERS,
+    members,
+    isMember: viewerUserId ? memberIds.includes(viewerUserId) : false,
+    createdByUsername: db.prepare('SELECT username FROM users WHERE id = ?').get(group.created_by_user_id)?.username,
+  };
 }
 
 // --- Auth ---
@@ -433,11 +463,99 @@ app.post('/api/users/:username/friends/remove', requireAuth, requireSelf, (req, 
   res.json({ status: 'removed' });
 });
 
+// --- Groups ---
+app.get('/api/users/:username/groups', (req, res) => {
+  const user = getUserByUsername(req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const groups = db.prepare(`
+    SELECT g.* FROM groups g
+    JOIN group_members gm ON gm.group_id = g.id
+    WHERE gm.user_id = ?
+    ORDER BY g.created_at DESC
+  `).all(user.id);
+  res.json(groups.map((g) => serializeGroup(g, user.id)));
+});
+
+app.get('/api/users/:username/groups/discover', (req, res) => {
+  const user = getUserByUsername(req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const q = (req.query.q || '').trim();
+  const groups = db.prepare(`
+    SELECT g.* FROM groups g
+    WHERE g.name LIKE ?
+      AND g.id NOT IN (SELECT group_id FROM group_members WHERE user_id = ?)
+    ORDER BY g.created_at DESC
+    LIMIT 50
+  `).all(`%${q}%`, user.id);
+  res.json(groups.map((g) => serializeGroup(g, user.id)));
+});
+
+app.post('/api/groups', requireAuth, (req, res) => {
+  const { name, description } = req.body || {};
+  if (!name || !name.trim() || name.trim().length > 40) {
+    return res.status(400).json({ error: 'Group name must be 1-40 characters' });
+  }
+  const info = db.prepare(`
+    INSERT INTO groups (name, description, created_by_user_id) VALUES (?, ?, ?)
+  `).run(name.trim(), (description || '').trim() || null, req.authUser.id);
+  db.prepare('INSERT INTO group_members (group_id, user_id) VALUES (?, ?)').run(info.lastInsertRowid, req.authUser.id);
+
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(serializeGroup(group, req.authUser.id));
+});
+
+app.get('/api/groups/:groupId', (req, res) => {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  const viewer = getUserByUsername((req.query.viewerUsername || ''));
+  res.json(serializeGroup(group, viewer ? viewer.id : null));
+});
+
+app.post('/api/groups/:groupId/join', requireAuth, (req, res) => {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  if (isGroupMember(group.id, req.authUser.id)) return res.status(400).json({ error: 'Already in this group' });
+  if (getGroupMemberIds(group.id).length >= GROUP_MAX_MEMBERS) {
+    return res.status(400).json({ error: `This group is full (max ${GROUP_MAX_MEMBERS})` });
+  }
+  db.prepare('INSERT INTO group_members (group_id, user_id) VALUES (?, ?)').run(group.id, req.authUser.id);
+  res.json(serializeGroup(group, req.authUser.id));
+});
+
+app.post('/api/groups/:groupId/leave', requireAuth, (req, res) => {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(group.id, req.authUser.id);
+  res.json({ status: 'left' });
+});
+
 // --- Posts (photo-credited Beast Points) ---
+const POST_JOIN_SQL = `
+  SELECT p.*, su.username as subject_username, cu.username as credited_by_username,
+         a.key as activity_key, a.name as activity_name, a.icon as activity_icon,
+         g.name as group_name
+  FROM posts p
+  JOIN users su ON su.id = p.subject_user_id
+  JOIN users cu ON cu.id = p.credited_by_user_id
+  LEFT JOIN activities a ON a.id = p.activity_id
+  LEFT JOIN groups g ON g.id = p.group_id
+`;
+function getPostRow(id) {
+  return db.prepare(`${POST_JOIN_SQL} WHERE p.id = ?`).get(id);
+}
+function maxCreditFor(visibility) {
+  return visibility === 'group' ? 200 : 50;
+}
+
 function serializePost(row, viewerUserId) {
   const reactions = db.prepare(`SELECT emoji, COUNT(*) as count FROM reactions WHERE post_id = ? GROUP BY emoji`).all(row.id);
   const myReaction = viewerUserId
     ? db.prepare(`SELECT emoji FROM reactions WHERE post_id = ? AND user_id = ?`).get(row.id, viewerUserId)
+    : null;
+  const totalPoints = db.prepare('SELECT COALESCE(SUM(points), 0) as total FROM post_credits WHERE post_id = ?').get(row.id).total;
+  const creditorCount = db.prepare('SELECT COUNT(*) as n FROM post_credits WHERE post_id = ?').get(row.id).n;
+  const myCredit = viewerUserId
+    ? db.prepare('SELECT points FROM post_credits WHERE post_id = ? AND awarder_user_id = ?').get(row.id, viewerUserId)
     : null;
   const createdAtMs = Date.parse(`${row.created_at.replace(' ', 'T')}Z`);
   const expired = !row.saved && Date.now() - createdAtMs > POST_EXPIRY_MS;
@@ -449,7 +567,13 @@ function serializePost(row, viewerUserId) {
     activityKey: row.activity_key || null,
     activityName: row.activity_name || null,
     activityIcon: row.activity_icon || null,
-    points: row.points,
+    visibility: row.visibility,
+    groupId: row.group_id || null,
+    groupName: row.group_name || null,
+    points: totalPoints,
+    creditorCount,
+    myCredit: myCredit ? myCredit.points : null,
+    maxCredit: maxCreditFor(row.visibility),
     caption: row.caption,
     saved: !!row.saved,
     photoUrl: `/uploads/${row.photo_filename}`,
@@ -463,41 +587,74 @@ function serializePost(row, viewerUserId) {
 
 app.post('/api/posts', requireAuth, upload.single('photo'), (req, res) => {
   const creditedBy = req.authUser;
-  const subject = getUserByUsername((req.body || {}).subjectUsername);
-  if (!subject) return res.status(404).json({ error: 'That friend does not exist' });
-  if (subject.id === creditedBy.id) return res.status(400).json({ error: "You can't credit yourself" });
-  if (!areFriends(creditedBy.id, subject.id)) return res.status(403).json({ error: 'You can only credit friends' });
+  const body = req.body || {};
+  const visibility = body.visibility === 'group' ? 'group' : 'public';
+
+  const fail = (status, error) => {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(status).json({ error });
+  };
+
+  const subject = getUserByUsername(body.subjectUsername);
+  if (!subject) return fail(404, 'That person does not exist');
+  if (subject.id === creditedBy.id) return fail(400, "You can't credit yourself");
   if (!req.file) return res.status(400).json({ error: 'A photo is required' });
 
-  const points = parseInt((req.body || {}).points, 10);
-  if (!Number.isInteger(points) || points < 1 || points > 200) {
-    fs.unlink(req.file.path, () => {});
-    return res.status(400).json({ error: 'Points must be between 1 and 200' });
+  let groupId = null;
+  if (visibility === 'group') {
+    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(body.groupId);
+    if (!group) return fail(404, 'Group not found');
+    if (!isGroupMember(group.id, creditedBy.id)) return fail(403, "You're not in that group");
+    if (!isGroupMember(group.id, subject.id)) return fail(400, 'That person is not in this group');
+    groupId = group.id;
+  }
+
+  const points = parseInt(body.points, 10);
+  const max = maxCreditFor(visibility);
+  if (!Number.isInteger(points) || points < 1 || points > max) {
+    return fail(400, `Points must be between 1 and ${max}`);
   }
 
   let activity = null;
-  if ((req.body || {}).activityKey) {
-    activity = db.prepare('SELECT * FROM activities WHERE key = ?').get(req.body.activityKey);
+  if (body.activityKey) {
+    activity = db.prepare('SELECT * FROM activities WHERE key = ?').get(body.activityKey);
   }
 
   const info = db.prepare(`
-    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, points, photo_filename, caption)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(subject.id, creditedBy.id, activity ? activity.id : null, points, req.file.filename, (req.body || {}).caption || null);
+    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, caption)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, req.file.filename, body.caption || null);
 
-  const row = db.prepare(`
-    SELECT p.*, su.username as subject_username, cu.username as credited_by_username,
-           a.key as activity_key, a.name as activity_name, a.icon as activity_icon
-    FROM posts p
-    JOIN users su ON su.id = p.subject_user_id
-    JOIN users cu ON cu.id = p.credited_by_user_id
-    LEFT JOIN activities a ON a.id = p.activity_id
-    WHERE p.id = ?
-  `).get(info.lastInsertRowid);
+  db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)')
+    .run(info.lastInsertRowid, creditedBy.id, points);
 
-  res.status(201).json(serializePost(row, creditedBy.id));
+  res.status(201).json(serializePost(getPostRow(info.lastInsertRowid), creditedBy.id));
 });
 
+app.post('/api/posts/:postId/credit', requireAuth, (req, res) => {
+  const user = req.authUser;
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  if (post.subject_user_id === user.id) return res.status(400).json({ error: "You can't credit yourself" });
+  if (post.visibility === 'group' && !isGroupMember(post.group_id, user.id)) {
+    return res.status(403).json({ error: "You're not in that group" });
+  }
+
+  const points = parseInt((req.body || {}).points, 10);
+  const max = maxCreditFor(post.visibility);
+  if (!Number.isInteger(points) || points < 1 || points > max) {
+    return res.status(400).json({ error: `Points must be between 1 and ${max}` });
+  }
+
+  db.prepare(`
+    INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)
+    ON CONFLICT(post_id, awarder_user_id) DO UPDATE SET points = excluded.points
+  `).run(post.id, user.id, points);
+
+  res.json(serializePost(getPostRow(post.id), user.id));
+});
+
+// "Friends" feed: public posts involving people you're friends with (or you).
 app.get('/api/users/:username/feed', (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -505,18 +662,46 @@ app.get('/api/users/:username/feed', (req, res) => {
   const visibleIds = [user.id, ...getFriendIds(user.id)];
   const placeholders = visibleIds.map(() => '?').join(',');
   const rows = db.prepare(`
-    SELECT p.*, su.username as subject_username, cu.username as credited_by_username,
-           a.key as activity_key, a.name as activity_name, a.icon as activity_icon
-    FROM posts p
-    JOIN users su ON su.id = p.subject_user_id
-    JOIN users cu ON cu.id = p.credited_by_user_id
-    LEFT JOIN activities a ON a.id = p.activity_id
-    WHERE p.subject_user_id IN (${placeholders})
+    ${POST_JOIN_SQL}
+    WHERE p.visibility = 'public' AND (p.subject_user_id IN (${placeholders}) OR p.credited_by_user_id IN (${placeholders}))
     ORDER BY p.created_at DESC
     LIMIT 100
-  `).all(...visibleIds);
+  `).all(...visibleIds, ...visibleIds);
 
   const posts = rows.map((r) => serializePost(r, user.id)).filter((p) => !p.expired);
+  res.json(posts);
+});
+
+// Discover: every public post, unfiltered by friendship.
+app.get('/api/users/:username/discover', (req, res) => {
+  const user = getUserByUsername(req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const rows = db.prepare(`
+    ${POST_JOIN_SQL}
+    WHERE p.visibility = 'public'
+    ORDER BY p.created_at DESC
+    LIMIT 100
+  `).all();
+
+  const posts = rows.map((r) => serializePost(r, user.id)).filter((p) => !p.expired);
+  res.json(posts);
+});
+
+// Group feed: posts scoped to one group, members only.
+app.get('/api/groups/:groupId/feed', requireAuth, (req, res) => {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  if (!isGroupMember(group.id, req.authUser.id)) return res.status(403).json({ error: "You're not in that group" });
+
+  const rows = db.prepare(`
+    ${POST_JOIN_SQL}
+    WHERE p.visibility = 'group' AND p.group_id = ?
+    ORDER BY p.created_at DESC
+    LIMIT 100
+  `).all(group.id);
+
+  const posts = rows.map((r) => serializePost(r, req.authUser.id)).filter((p) => !p.expired);
   res.json(posts);
 });
 
@@ -524,6 +709,9 @@ app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
+  if (post.visibility === 'group' && !isGroupMember(post.group_id, user.id)) {
+    return res.status(403).json({ error: "You're not in that group" });
+  }
   const { emoji } = req.body || {};
   if (!emoji) return res.status(400).json({ error: 'emoji is required' });
 
@@ -536,16 +724,7 @@ app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
     db.prepare('INSERT INTO reactions (post_id, user_id, emoji) VALUES (?, ?, ?)').run(post.id, user.id, emoji);
   }
 
-  const row = db.prepare(`
-    SELECT p.*, su.username as subject_username, cu.username as credited_by_username,
-           a.key as activity_key, a.name as activity_name, a.icon as activity_icon
-    FROM posts p
-    JOIN users su ON su.id = p.subject_user_id
-    JOIN users cu ON cu.id = p.credited_by_user_id
-    LEFT JOIN activities a ON a.id = p.activity_id
-    WHERE p.id = ?
-  `).get(post.id);
-  res.json(serializePost(row, user.id));
+  res.json(serializePost(getPostRow(post.id), user.id));
 });
 
 app.post('/api/posts/:postId/save', requireAuth, (req, res) => {
@@ -555,17 +734,7 @@ app.post('/api/posts/:postId/save', requireAuth, (req, res) => {
   if (post.subject_user_id !== user.id) return res.status(403).json({ error: 'Only the person in the photo can save it' });
 
   db.prepare('UPDATE posts SET saved = ? WHERE id = ?').run(post.saved ? 0 : 1, post.id);
-
-  const row = db.prepare(`
-    SELECT p.*, su.username as subject_username, cu.username as credited_by_username,
-           a.key as activity_key, a.name as activity_name, a.icon as activity_icon
-    FROM posts p
-    JOIN users su ON su.id = p.subject_user_id
-    JOIN users cu ON cu.id = p.credited_by_user_id
-    LEFT JOIN activities a ON a.id = p.activity_id
-    WHERE p.id = ?
-  `).get(post.id);
-  res.json(serializePost(row, user.id));
+  res.json(serializePost(getPostRow(post.id), user.id));
 });
 
 // Reclaim disk space from expired, unsaved photos.
