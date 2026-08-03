@@ -15,6 +15,8 @@ db.exec(`
     email_verified INTEGER NOT NULL DEFAULT 0,
     verify_token_hash TEXT,
     verify_token_expires TEXT,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    banned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -88,7 +90,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
-    created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -98,6 +100,25 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     joined_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(group_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    reporter_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    UNIQUE(post_id, reporter_user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    blocker_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(blocker_user_id, blocked_user_id)
   );
 `);
 
@@ -118,6 +139,26 @@ if (!userCols.includes('verify_token_hash')) {
 if (!userCols.includes('verify_token_expires')) {
   db.exec('ALTER TABLE users ADD COLUMN verify_token_expires TEXT');
 }
+if (!userCols.includes('is_admin')) {
+  db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+}
+if (!userCols.includes('banned')) {
+  db.exec('ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0');
+}
+
+// Auto-promote an admin account by email, so there's no manual DB surgery needed.
+if (process.env.ADMIN_EMAIL) {
+  db.prepare('UPDATE users SET is_admin = 1 WHERE email = ?').run(process.env.ADMIN_EMAIL.toLowerCase());
+}
+
+// NOTE on groups.created_by_user_id: new databases get ON DELETE SET NULL (see
+// CREATE TABLE above) so deleting your account doesn't cascade-destroy groups
+// you created. Databases from before this change still have the old ON DELETE
+// CASCADE behavior — rebuilding the table in place to fix that turns out to
+// corrupt other tables' foreign keys that point at `groups` (renaming a
+// referenced table breaks their FK target). Instead, account deletion always
+// explicitly detaches ownership (UPDATE groups SET created_by_user_id = NULL)
+// before deleting the user row, which sidesteps the CASCADE either way.
 
 // --- Migrations for databases created before `repeatable` / `period_key` existed ---
 const activityCols = db.prepare('PRAGMA table_info(activities)').all().map((c) => c.name);

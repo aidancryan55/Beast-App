@@ -93,6 +93,7 @@ function LoginScreen({ onLogin, onSignup }) {
         )}
         {error && errorCode !== 'unverified' && <p className="error">{error}</p>}
         <p className="fineprint">Your display name is shown publicly on the leaderboard and on posts anyone can see in Discover — your email stays private and is only used to sign in.</p>
+        <p className="fineprint"><a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></p>
       </div>
     </div>
   );
@@ -323,8 +324,47 @@ function GiveCredit({ post, onCredit }) {
   );
 }
 
-function PostCard({ post, currentUsername, onReact, onSave, onCredit }) {
+function ReportButton({ post, onReport }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    try {
+      await onReport(post.id, reason.trim());
+      setDone(true);
+      setOpen(false);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  if (done) return <span className="flag-done">Reported ✓</span>;
+  if (!open) {
+    return <button type="button" className="flag-btn" onClick={() => setOpen(true)}>⚠️ Report</button>;
+  }
+  return (
+    <form className="report-form" onSubmit={submit}>
+      <input
+        autoFocus
+        placeholder="What's wrong with this post?"
+        value={reason}
+        maxLength={500}
+        onChange={(e) => setReason(e.target.value)}
+      />
+      <button type="submit" disabled={!reason.trim()}>Send</button>
+      <button type="button" className="secondary-btn" onClick={() => setOpen(false)}>×</button>
+      {error && <span className="error">{error}</span>}
+    </form>
+  );
+}
+
+function PostCard({ post, currentUsername, onReact, onSave, onCredit, onReport, onBlock }) {
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
+  const isPoster = post.creditedByUsername.toLowerCase() === currentUsername.toLowerCase();
   const hoursLeft = post.saved ? null : Math.max(0, Math.ceil((Date.parse(post.expiresAt) - Date.now()) / 3600000));
 
   return (
@@ -368,22 +408,30 @@ function PostCard({ post, currentUsername, onReact, onSave, onCredit }) {
           )}
         </div>
       </div>
+      <div className="post-flags">
+        <ReportButton post={post} onReport={onReport} />
+        {!isPoster && (
+          <button type="button" className="flag-btn" onClick={() => onBlock(post.creditedByUsername)}>
+            🚫 Block {post.creditedByUsername}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-function PostList({ posts, currentUsername, onReact, onSave, onCredit, emptyText }) {
+function PostList({ posts, currentUsername, onReact, onSave, onCredit, onReport, onBlock, emptyText }) {
   if (!posts.length) return <div className="empty-state">{emptyText}</div>;
   return (
     <div className="post-list">
       {posts.map((post) => (
-        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onSave={onSave} onCredit={onCredit} />
+        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} />
       ))}
     </div>
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, activities, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers }) {
+function DiscoverView({ discoverFeed, myGroups, activities, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers, onReport, onBlock }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="feed-view">
@@ -404,6 +452,8 @@ function DiscoverView({ discoverFeed, myGroups, activities, currentUsername, onS
         onReact={onReact}
         onSave={onSave}
         onCredit={onCredit}
+        onReport={onReport}
+        onBlock={onBlock}
         emptyText="No public posts yet — be the first to catch someone being a beast."
       />
     </div>
@@ -452,7 +502,7 @@ function CreateGroupForm({ onCreate, onClose }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, onLeave, onSubmitPost, onReact, onSave, onCredit }) {
+function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, onLeave, onSubmitPost, onReact, onSave, onCredit, onReport, onBlock }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="group-detail">
@@ -483,6 +533,8 @@ function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, on
         onReact={onReact}
         onSave={onSave}
         onCredit={onCredit}
+        onReport={onReport}
+        onBlock={onBlock}
         emptyText="No posts in this group yet."
       />
     </div>
@@ -581,6 +633,89 @@ function LeaderboardView({ leaderboard, currentUsername }) {
   );
 }
 
+function SettingsView({ blockedUsers, onUnblock, onDeleteAccount }) {
+  const [password, setPassword] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  async function submitDelete(e) {
+    e.preventDefault();
+    setError('');
+    setDeleting(true);
+    try {
+      await onDeleteAccount(password);
+    } catch (err) {
+      setError(err.message);
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="settings-view">
+      <section className="friend-section">
+        <h2>Blocked users</h2>
+        {blockedUsers.length === 0 && <div className="empty-state">You haven't blocked anyone.</div>}
+        {blockedUsers.map((u) => (
+          <div key={u} className="friend-row">
+            <span>{u}</span>
+            <button className="friend-action" onClick={() => onUnblock(u)}>Unblock</button>
+          </div>
+        ))}
+      </section>
+
+      <section className="friend-section">
+        <h2>Legal</h2>
+        <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>
+      </section>
+
+      <section className="friend-section danger-zone">
+        <h2>Delete account</h2>
+        <p className="fineprint">This permanently deletes your account, posts, and photos. This can't be undone.</p>
+        {!confirming ? (
+          <button type="button" className="friend-action remove" onClick={() => setConfirming(true)}>Delete my account</button>
+        ) : (
+          <form onSubmit={submitDelete}>
+            <input
+              type="password"
+              placeholder="Confirm your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+            />
+            {error && <p className="error">{error}</p>}
+            <div className="credit-modal-actions">
+              <button type="button" className="secondary-btn" onClick={() => setConfirming(false)}>Cancel</button>
+              <button type="submit" disabled={deleting || !password}>{deleting ? 'Deleting…' : 'Permanently delete'}</button>
+            </div>
+          </form>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function AdminView({ reports, onResolve }) {
+  if (!reports.length) return <div className="empty-state">No pending reports. 🎉</div>;
+  return (
+    <div className="admin-view">
+      {reports.map((r) => (
+        <div key={r.id} className="admin-report-card">
+          <img className="post-photo" src={r.photoUrl} alt="" />
+          <p><strong>{r.subjectUsername}</strong> caught by <strong>{r.creditedByUsername}</strong> <span className={`post-visibility ${r.visibility}`}>{r.visibility}</span></p>
+          {r.caption && <p className="post-caption">{r.caption}</p>}
+          <p className="fineprint">Reported by {r.reporterUsername}: "{r.reason}"</p>
+          <div className="credit-modal-actions">
+            <button type="button" className="secondary-btn" onClick={() => onResolve(r.id, 'dismiss')}>Dismiss</button>
+            <button type="button" className="friend-action remove" onClick={() => onResolve(r.id, 'remove')}>Remove post</button>
+            <button type="button" className="friend-action remove" onClick={() => onResolve(r.id, 'ban')}>Remove & ban poster</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function loadStoredAuth() {
   try {
     const raw = localStorage.getItem('ccq_auth');
@@ -597,6 +732,7 @@ export default function App() {
     return stored;
   });
   const displayName = auth?.displayName || '';
+  const isAdmin = !!auth?.isAdmin;
   const [activities, setActivities] = useState([]);
   const [progress, setProgress] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
@@ -606,13 +742,15 @@ export default function App() {
   const [groupSearchQuery, setGroupSearchQuery] = useState('');
   const [activeGroupId, setActiveGroupId] = useState(null);
   const [groupFeed, setGroupFeed] = useState([]);
+  const [blockedUsers, setBlockedUsers] = useState([]);
+  const [adminReports, setAdminReports] = useState([]);
   const [tab, setTab] = useState('discover');
   const [loadError, setLoadError] = useState('');
 
   async function handleLogin(email, password) {
     const result = await api.login(email, password);
     api.setToken(result.token);
-    const authData = { displayName: result.displayName, token: result.token };
+    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin };
     localStorage.setItem('ccq_auth', JSON.stringify(authData));
     setAuth(authData);
   }
@@ -760,6 +898,55 @@ export default function App() {
     await refreshGroupFeed(groupId);
   }
 
+  async function handleReportPost(postId, reason) {
+    await withAuthGuard(() => api.reportPost(postId, reason));
+  }
+
+  async function refreshBlockedUsers() {
+    setBlockedUsers(await api.getBlockedUsers());
+  }
+
+  async function handleBlockUser(targetUsername) {
+    await withAuthGuard(async () => {
+      await api.blockUser(targetUsername);
+      await refreshVisibleFeeds();
+      await refreshBlockedUsers();
+    });
+  }
+
+  async function handleUnblockUser(targetUsername) {
+    await withAuthGuard(async () => {
+      await api.unblockUser(targetUsername);
+      await refreshBlockedUsers();
+    });
+  }
+
+  async function handleDeleteAccount(password) {
+    await api.deleteAccount(password);
+    localStorage.removeItem('ccq_auth');
+    api.setToken(null);
+    setAuth(null);
+    setProgress(null);
+  }
+
+  async function refreshAdminReports() {
+    setAdminReports(await api.getAdminReports());
+  }
+
+  async function handleResolveReport(reportId, action) {
+    await withAuthGuard(async () => {
+      await api.resolveReport(reportId, action);
+      await refreshAdminReports();
+      await refreshVisibleFeeds();
+    });
+  }
+
+  useEffect(() => {
+    if (tab === 'settings') refreshBlockedUsers();
+    if (tab === 'admin' && isAdmin) refreshAdminReports();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   if (!displayName) {
     return <LoginScreen onLogin={handleLogin} onSignup={handleSignup} />;
   }
@@ -788,6 +975,12 @@ export default function App() {
           Badges {progress.badges.length ? `(${progress.badges.length})` : ''}
         </button>
         <button className={tab === 'leaderboard' ? 'active' : ''} onClick={() => setTab('leaderboard')}>Leaderboard</button>
+        <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>⚙️</button>
+        {isAdmin && (
+          <button className={tab === 'admin' ? 'active' : ''} onClick={() => setTab('admin')}>
+            🛡️ Admin {adminReports.length ? `(${adminReports.length})` : ''}
+          </button>
+        )}
       </nav>
 
       <main className="app-main">
@@ -802,6 +995,8 @@ export default function App() {
             onSave={handleSavePost}
             onCredit={handleCreditPost}
             onSearchUsers={handleSearchUsers}
+            onReport={handleReportPost}
+            onBlock={handleBlockUser}
           />
         )}
         {tab === 'groups' && !activeGroupId && (
@@ -826,10 +1021,16 @@ export default function App() {
             onReact={handleReact}
             onSave={handleSavePost}
             onCredit={handleCreditPost}
+            onReport={handleReportPost}
+            onBlock={handleBlockUser}
           />
         )}
         {tab === 'badges' && <BadgesView badges={progress.badges} />}
         {tab === 'leaderboard' && <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} />}
+        {tab === 'settings' && (
+          <SettingsView blockedUsers={blockedUsers} onUnblock={handleUnblockUser} onDeleteAccount={handleDeleteAccount} />
+        )}
+        {tab === 'admin' && isAdmin && <AdminView reports={adminReports} onResolve={handleResolveReport} />}
       </main>
 
       <footer className="app-footer">

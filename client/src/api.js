@@ -70,4 +70,14 @@ export const api = {
   reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),
   savePost: (postId) => req(`/posts/${postId}/save`, { method: 'POST' }),
   creditPost: (postId, points) => req(`/posts/${postId}/credit`, { method: 'POST', body: JSON.stringify({ points }) }),
+  reportPost: (postId, reason) => req(`/posts/${postId}/report`, { method: 'POST', body: JSON.stringify({ reason }) }),
+
+  getBlockedUsers: () => req('/users/_/blocked'),
+  blockUser: (targetUsername) => req('/users/_/block', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
+  unblockUser: (targetUsername) => req('/users/_/unblock', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
+
+  deleteAccount: (password) => req('/account', { method: 'DELETE', body: JSON.stringify({ password }) }),
+
+  getAdminReports: () => req('/admin/reports'),
+  resolveReport: (reportId, action) => req(`/admin/reports/${reportId}/resolve`, { method: 'POST', body: JSON.stringify({ action }) }),
 };

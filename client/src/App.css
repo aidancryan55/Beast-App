@@ -843,3 +843,85 @@
   color: var(--text-dim);
   margin-top: 12px;
 }
+
+/* ---------- Report / block (Apple 1.2 moderation controls) ---------- */
+.post-flags {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px 14px;
+  flex-wrap: wrap;
+}
+
+.flag-btn {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.flag-btn:hover {
+  color: var(--text);
+}
+
+.flag-done {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.report-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.report-form input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.report-form button[type='submit'] {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: none;
+  background: var(--primary);
+  color: white;
+}
+
+/* ---------- Settings / admin ---------- */
+.settings-view, .admin-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.danger-zone {
+  border-color: #d64545;
+}
+
+.danger-zone h2 {
+  color: #d64545;
+}
+
+.admin-report-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.admin-report-card .post-photo {
+  width: 100%;
+  border-radius: 12px;
+  margin-bottom: 8px;
+}

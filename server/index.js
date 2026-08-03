@@ -63,6 +63,7 @@ function requireAuth(req, res, next) {
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   const user = getUserByToken(token);
   if (!user) return res.status(401).json({ error: 'Please log in again' });
+  if (user.banned) return res.status(403).json({ error: 'This account has been suspended.', code: 'banned' });
   req.authUser = user;
   req.authToken = token;
   next();
@@ -72,6 +73,20 @@ function requireVerified(req, res, next) {
     return res.status(403).json({ error: 'Verify your email before posting — check your inbox for the confirmation link.', code: 'unverified' });
   }
   next();
+}
+function requireAdmin(req, res, next) {
+  if (!req.authUser.is_admin) return res.status(403).json({ error: 'Admins only' });
+  next();
+}
+
+// --- Basic caption content filter ---
+// Not a substitute for the report/block/admin pipeline below (which is what
+// actually satisfies Apple's UGC moderation requirement) — just a first-pass
+// block on the most obvious abuse in text fields. Photo content isn't
+// automatically screened; that needs a paid image-moderation API we don't have.
+const CAPTION_BLOCKLIST = [/\bn[i1]gg[ae3]r/i, /\bf[a4]gg?[o0]t/i, /\br[a4]pe/i, /\bch[i1]ld\s*p[o0]rn/i];
+function containsBlockedContent(text) {
+  return typeof text === 'string' && CAPTION_BLOCKLIST.some((re) => re.test(text));
 }
 
 // --- Email verification tokens + Resend ---
@@ -189,6 +204,23 @@ function computeUserStats(userId) {
   };
 }
 
+// --- Blocking ---
+function isBlocked(userIdA, userIdB) {
+  return !!db.prepare(`
+    SELECT 1 FROM blocks
+    WHERE (blocker_user_id = ? AND blocked_user_id = ?) OR (blocker_user_id = ? AND blocked_user_id = ?)
+  `).get(userIdA, userIdB, userIdB, userIdA);
+}
+// Union of "users I've blocked" and "users who've blocked me" — either
+// direction hides that person's content from a feed.
+function getHiddenUserIds(userId) {
+  const rows = db.prepare(`
+    SELECT blocker_user_id, blocked_user_id FROM blocks
+    WHERE blocker_user_id = ? OR blocked_user_id = ?
+  `).all(userId, userId);
+  return rows.map((r) => (r.blocker_user_id === userId ? r.blocked_user_id : r.blocker_user_id));
+}
+
 // --- Groups ---
 function isGroupMember(groupId, userId) {
   return !!db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(groupId, userId);
@@ -241,10 +273,11 @@ app.post('/api/signup', authLimiter, async (req, res) => {
   const passwordHash = await hashPassword(password);
   const { token, tokenHash, expires } = generateVerifyToken();
 
+  const isAdmin = process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase() ? 1 : 0;
   db.prepare(`
-    INSERT INTO users (username, email, password_hash, email_verified, verify_token_hash, verify_token_expires)
-    VALUES (?, ?, ?, 0, ?, ?)
-  `).run(name, email.toLowerCase(), passwordHash, tokenHash, expires);
+    INSERT INTO users (username, email, password_hash, email_verified, verify_token_hash, verify_token_expires, is_admin)
+    VALUES (?, ?, ?, 0, ?, ?, ?)
+  `).run(name, email.toLowerCase(), passwordHash, tokenHash, expires, isAdmin);
 
   try {
     await sendVerificationEmail(email, token);
@@ -282,16 +315,40 @@ app.post('/api/login', authLimiter, async (req, res) => {
   if (!user || !user.password_hash) return res.status(404).json({ error: 'No account with that email.' });
   const ok = await verifyPassword(password || '', user.password_hash);
   if (!ok) return res.status(401).json({ error: 'Wrong password.' });
+  if (user.banned) return res.status(403).json({ error: 'This account has been suspended.', code: 'banned' });
   if (!user.email_verified) {
     return res.status(403).json({ error: 'Please verify your email first — check your inbox for the confirmation link.', code: 'unverified' });
   }
   const token = createSession(user.id);
-  res.json({ displayName: user.username, token });
+  res.json({ displayName: user.username, token, isAdmin: !!user.is_admin });
 });
 
 app.post('/api/logout', requireAuth, (req, res) => {
   db.prepare('DELETE FROM sessions WHERE token = ?').run(req.authToken);
   res.json({ status: 'logged out' });
+});
+
+// Apple 5.1.1(v): account creation requires in-app account deletion.
+app.delete('/api/account', requireAuth, async (req, res) => {
+  const user = req.authUser;
+  const ok = await verifyPassword((req.body || {}).password || '', user.password_hash);
+  if (!ok) return res.status(401).json({ error: 'Wrong password.' });
+
+  // Detach group ownership first so deleting your account never cascades into
+  // destroying a group other people are still in (see note in db.js).
+  db.prepare('UPDATE groups SET created_by_user_id = NULL WHERE created_by_user_id = ?').run(user.id);
+
+  const photoFilenames = db.prepare(`
+    SELECT photo_filename FROM posts WHERE subject_user_id = ? OR credited_by_user_id = ?
+  `).all(user.id, user.id).map((r) => r.photo_filename);
+
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, reports, blocks, group_members
+
+  for (const filename of photoFilenames) {
+    fs.unlink(path.join(uploadsDir, filename), () => {});
+  }
+
+  res.json({ status: 'deleted' });
 });
 
 // --- Activities ---
@@ -337,6 +394,31 @@ app.get('/api/users/:username/search', (req, res) => {
     SELECT username FROM users WHERE username LIKE ? AND id != ? LIMIT 10
   `).all(`%${q}%`, user.id).map((r) => r.username);
   res.json(results);
+});
+
+// --- Blocking ---
+app.get('/api/users/:username/blocked', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.username FROM blocks b JOIN users u ON u.id = b.blocked_user_id WHERE b.blocker_user_id = ?
+  `).all(req.authUser.id);
+  res.json(rows.map((r) => r.username));
+});
+
+app.post('/api/users/:username/block', requireAuth, (req, res) => {
+  const target = getUserByUsername((req.body || {}).targetUsername);
+  if (!target) return res.status(404).json({ error: 'That user does not exist' });
+  if (target.id === req.authUser.id) return res.status(400).json({ error: "You can't block yourself" });
+  db.prepare(`
+    INSERT OR IGNORE INTO blocks (blocker_user_id, blocked_user_id) VALUES (?, ?)
+  `).run(req.authUser.id, target.id);
+  res.json({ status: 'blocked' });
+});
+
+app.post('/api/users/:username/unblock', requireAuth, (req, res) => {
+  const target = getUserByUsername((req.body || {}).targetUsername);
+  if (!target) return res.status(404).json({ error: 'That user does not exist' });
+  db.prepare('DELETE FROM blocks WHERE blocker_user_id = ? AND blocked_user_id = ?').run(req.authUser.id, target.id);
+  res.json({ status: 'unblocked' });
 });
 
 // --- Groups ---
@@ -475,6 +557,8 @@ app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), (re
   if (!subject) return fail(404, 'That person does not exist');
   if (subject.id === creditedBy.id) return fail(400, "You can't credit yourself");
   if (!req.file) return res.status(400).json({ error: 'A photo is required' });
+  if (containsBlockedContent(body.caption)) return fail(400, 'That caption isn\'t allowed.');
+  if (isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
 
   let groupId = null;
   if (visibility === 'group') {
@@ -535,6 +619,7 @@ app.get('/api/users/:username/discover', (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
+  const hidden = new Set(getHiddenUserIds(user.id));
   const rows = db.prepare(`
     ${POST_JOIN_SQL}
     WHERE p.visibility = 'public'
@@ -542,7 +627,10 @@ app.get('/api/users/:username/discover', (req, res) => {
     LIMIT 100
   `).all();
 
-  const posts = rows.map((r) => serializePost(r, user.id)).filter((p) => !p.expired);
+  const posts = rows
+    .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id))
+    .map((r) => serializePost(r, user.id))
+    .filter((p) => !p.expired);
   res.json(posts);
 });
 
@@ -552,6 +640,7 @@ app.get('/api/groups/:groupId/feed', requireAuth, (req, res) => {
   if (!group) return res.status(404).json({ error: 'Group not found' });
   if (!isGroupMember(group.id, req.authUser.id)) return res.status(403).json({ error: "You're not in that group" });
 
+  const hidden = new Set(getHiddenUserIds(req.authUser.id));
   const rows = db.prepare(`
     ${POST_JOIN_SQL}
     WHERE p.visibility = 'group' AND p.group_id = ?
@@ -559,7 +648,10 @@ app.get('/api/groups/:groupId/feed', requireAuth, (req, res) => {
     LIMIT 100
   `).all(group.id);
 
-  const posts = rows.map((r) => serializePost(r, req.authUser.id)).filter((p) => !p.expired);
+  const posts = rows
+    .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id))
+    .map((r) => serializePost(r, req.authUser.id))
+    .filter((p) => !p.expired);
   res.json(posts);
 });
 
@@ -595,17 +687,134 @@ app.post('/api/posts/:postId/save', requireAuth, (req, res) => {
   res.json(serializePost(getPostRow(post.id), user.id));
 });
 
+// --- Reporting (Apple 1.2: users must be able to report objectionable content) ---
+app.post('/api/posts/:postId/report', requireAuth, (req, res) => {
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  const reason = ((req.body || {}).reason || '').trim().slice(0, 500);
+  if (!reason) return res.status(400).json({ error: 'Tell us what\'s wrong with this post.' });
+
+  db.prepare(`
+    INSERT INTO reports (post_id, reporter_user_id, reason) VALUES (?, ?, ?)
+    ON CONFLICT(post_id, reporter_user_id) DO UPDATE SET reason = excluded.reason, status = 'pending', resolved_at = NULL
+  `).run(post.id, req.authUser.id, reason);
+
+  res.status(201).json({ status: 'reported' });
+});
+
+function deletePostAndFile(postId) {
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
+  if (!post) return;
+  fs.unlink(path.join(uploadsDir, post.photo_filename), () => {});
+  db.prepare('DELETE FROM posts WHERE id = ?').run(postId);
+}
+
+// --- Admin moderation queue ---
+// Not a public endpoint — gated behind is_admin (see ADMIN_EMAIL in db.js).
+// This is what makes "act on reports within 24h" operationally possible.
+app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT r.id, r.reason, r.status, r.created_at,
+           reporter.username as reporter_username,
+           p.id as post_id, p.photo_filename, p.caption, p.visibility,
+           su.username as subject_username, cu.username as credited_by_username
+    FROM reports r
+    JOIN users reporter ON reporter.id = r.reporter_user_id
+    JOIN posts p ON p.id = r.post_id
+    JOIN users su ON su.id = p.subject_user_id
+    JOIN users cu ON cu.id = p.credited_by_user_id
+    WHERE r.status = 'pending'
+    ORDER BY r.created_at ASC
+  `).all();
+  res.json(rows.map((r) => ({
+    id: r.id,
+    reason: r.reason,
+    status: r.status,
+    createdAt: r.created_at,
+    reporterUsername: r.reporter_username,
+    postId: r.post_id,
+    photoUrl: `/uploads/${r.photo_filename}`,
+    caption: r.caption,
+    visibility: r.visibility,
+    subjectUsername: r.subject_username,
+    creditedByUsername: r.credited_by_username,
+  })));
+});
+
+app.post('/api/admin/reports/:reportId/resolve', requireAuth, requireAdmin, (req, res) => {
+  const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.reportId);
+  if (!report) return res.status(404).json({ error: 'Report not found' });
+  const { action } = req.body || {}; // 'dismiss' | 'remove' | 'ban'
+
+  if (action === 'remove' || action === 'ban') {
+    const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(report.post_id);
+    if (post && action === 'ban') {
+      db.prepare('UPDATE users SET banned = 1 WHERE id = ?').run(post.credited_by_user_id);
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(post.credited_by_user_id);
+    }
+    deletePostAndFile(report.post_id);
+  }
+
+  db.prepare(`UPDATE reports SET status = ?, resolved_at = datetime('now') WHERE id = ?`)
+    .run(action === 'dismiss' ? 'dismissed' : action === 'ban' ? 'banned' : 'removed', report.id);
+
+  res.json({ status: 'resolved' });
+});
+
 // Reclaim disk space from expired, unsaved photos.
 function cleanupExpiredPosts() {
   const cutoff = new Date(Date.now() - POST_EXPIRY_MS).toISOString().replace('T', ' ').slice(0, 19);
-  const expired = db.prepare(`SELECT * FROM posts WHERE saved = 0 AND created_at < ?`).all(cutoff);
-  for (const post of expired) {
-    fs.unlink(path.join(uploadsDir, post.photo_filename), () => {});
-    db.prepare('DELETE FROM posts WHERE id = ?').run(post.id);
-  }
+  const expired = db.prepare(`SELECT id FROM posts WHERE saved = 0 AND created_at < ?`).all(cutoff);
+  for (const post of expired) deletePostAndFile(post.id);
 }
 cleanupExpiredPosts();
 setInterval(cleanupExpiredPosts, 60 * 60 * 1000);
+
+const CONTACT_EMAIL = process.env.CONTACT_EMAIL || 'aidancryan55@gmail.com';
+
+// Static privacy policy page (Apple requires a working URL, linked in-app and
+// in App Store Connect). Plain server-rendered HTML so it works with no JS
+// and survives independently of the SPA bundle.
+app.get('/privacy', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — The Beast Game</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px 20px 60px; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; margin-top: 2em; }
+  a { color: #6b3fa0; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy — The Beast Game</h1>
+<p>Last updated: ${new Date().toISOString().slice(0, 10)}</p>
+
+<h2>What we collect</h2>
+<p>Email address (for login and account recovery — never shown publicly), a display name (shown publicly on posts and the leaderboard), your password (stored as a bcrypt hash, never in plain text), and photos you upload as part of posts.</p>
+
+<h2>How we use it</h2>
+<p>To operate the app: authenticate you, show your display name on content you post or are credited in, calculate points and leaderboard standing, and send you a one-time verification email via Resend when you sign up.</p>
+
+<h2>Photos and posts</h2>
+<p>Photos you post are automatically deleted from our servers 24 hours after posting, unless you choose to save them. Public posts are visible to all users; group posts are visible only to members of that group.</p>
+
+<h2>Content moderation</h2>
+<p>Any user can report a post they find objectionable directly in the app. Reports are reviewed by a moderator, and violating content or accounts are actioned (content removed and/or the account suspended) within 24 hours. Users can also block other users, which immediately hides that user's content from them and vice versa.</p>
+
+<h2>Account deletion</h2>
+<p>You can permanently delete your account and all associated data at any time from within the app, under Settings. This immediately deletes your posts, photos, and personal data from our active database.</p>
+
+<h2>Data sharing</h2>
+<p>We do not sell or share your personal data with third parties, except Resend (resend.com), which we use solely to deliver transactional verification emails.</p>
+
+<h2>Contact</h2>
+<p>Questions, concerns, or a report you'd like to escalate directly? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+</body>
+</html>`);
+});
 
 // In production, serve the built React app from this same process/port
 // so there's a single service to deploy instead of two.
