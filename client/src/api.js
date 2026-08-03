@@ -62,7 +62,7 @@ export const api = {
     if (activityKey) form.append('activityKey', activityKey);
     form.append('points', points);
     if (caption) form.append('caption', caption);
-    form.append('photo', photo);
+    form.append('photo', photo, photo.name || 'photo.jpg');
     form.append('visibility', visibility || 'public');
     if (groupId) form.append('groupId', groupId);
     return reqForm('/posts', form);

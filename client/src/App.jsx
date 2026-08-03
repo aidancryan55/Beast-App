@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import './App.css';
 
@@ -141,6 +141,150 @@ function PeriodTotals({ periodTotals }) {
   );
 }
 
+async function getCameraStream(facingMode) {
+  const attempts = [
+    { video: { facingMode: { exact: facingMode } }, audio: false },
+    { video: { facingMode }, audio: false },
+    { video: true, audio: false },
+  ];
+  let lastErr;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+function roundedRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function DualCameraCapture({ onCapture, onCancel }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const shotsRef = useRef({});
+  const [phase, setPhase] = useState('back'); // 'back' | 'front' | 'composing'
+  const [error, setError] = useState('');
+
+  function stopStream() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }
+
+  async function startPhase(nextPhase) {
+    setError('');
+    stopStream();
+    try {
+      const stream = await getCameraStream(nextPhase === 'back' ? 'environment' : 'user');
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setPhase(nextPhase);
+    } catch {
+      setError("Couldn't access your camera. You can choose a photo instead.");
+    }
+  }
+
+  useEffect(() => {
+    startPhase('back');
+    return stopStream;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function grabFrame() {
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    return canvas;
+  }
+
+  function compose() {
+    const { back, front } = shotsRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = back.width;
+    canvas.height = back.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(back, 0, 0);
+
+    const overlayW = back.width * 0.32;
+    const overlayH = overlayW * (front.height / front.width);
+    const margin = back.width * 0.04;
+    const radius = overlayW * 0.12;
+
+    ctx.save();
+    roundedRectPath(ctx, margin, margin, overlayW, overlayH, radius);
+    ctx.clip();
+    ctx.drawImage(front, margin, margin, overlayW, overlayH);
+    ctx.restore();
+
+    ctx.lineWidth = back.width * 0.008;
+    ctx.strokeStyle = '#fff';
+    roundedRectPath(ctx, margin, margin, overlayW, overlayH, radius);
+    ctx.stroke();
+
+    canvas.toBlob((blob) => {
+      if (blob) onCapture(blob);
+      else setError('Could not process the photo — try again.');
+    }, 'image/jpeg', 0.88);
+  }
+
+  async function handleShutter() {
+    if (phase === 'back') {
+      shotsRef.current.back = grabFrame();
+      await startPhase('front');
+    } else if (phase === 'front') {
+      shotsRef.current.front = grabFrame();
+      stopStream();
+      setPhase('composing');
+      compose();
+    }
+  }
+
+  function handleCancel() {
+    stopStream();
+    onCancel();
+  }
+
+  if (error) {
+    return (
+      <div className="dual-capture">
+        <p className="error">{error}</p>
+        <button type="button" className="secondary-btn" onClick={handleCancel}>Back</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dual-capture">
+      <video ref={videoRef} className={`dual-capture-video ${phase === 'front' ? 'mirrored' : ''}`} playsInline muted autoPlay />
+      <p className="dual-capture-hint">
+        {phase === 'back' && "1/2 — Capture what you're looking at"}
+        {phase === 'front' && '2/2 — Now capture yourself'}
+        {phase === 'composing' && 'Combining your shots…'}
+      </p>
+      <div className="dual-capture-actions">
+        <button type="button" className="secondary-btn" onClick={handleCancel}>Cancel</button>
+        {phase !== 'composing' && (
+          <button type="button" className="shutter-btn" onClick={handleShutter} aria-label="Capture" />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClose, onSearchUsers, fixedGroupId }) {
   const [destination, setDestination] = useState(fixedGroupId ? 'group' : 'public');
   const [groupId, setGroupId] = useState(fixedGroupId || myGroups[0]?.id || '');
@@ -152,6 +296,7 @@ function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClo
   const [caption, setCaption] = useState('');
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState('');
+  const [dualCaptureOpen, setDualCaptureOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -174,6 +319,17 @@ function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClo
     if (!file) return;
     setPhoto(file);
     setPreview(URL.createObjectURL(file));
+  }
+
+  function handleDualCapture(blob) {
+    setPhoto(blob);
+    setPreview(URL.createObjectURL(blob));
+    setDualCaptureOpen(false);
+  }
+
+  function retakePhoto() {
+    setPhoto(null);
+    setPreview('');
   }
 
   async function submit(e) {
@@ -216,10 +372,22 @@ function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClo
           <p className="fineprint">Join or create a group first to post there.</p>
         )}
 
-        <label className="photo-picker">
-          {preview ? <img src={preview} alt="" className="photo-preview" /> : <span>Tap to take/choose a photo</span>}
-          <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} hidden />
-        </label>
+        {dualCaptureOpen ? (
+          <DualCameraCapture onCapture={handleDualCapture} onCancel={() => setDualCaptureOpen(false)} />
+        ) : preview ? (
+          <div className="photo-picker has-preview">
+            <img src={preview} alt="" className="photo-preview" />
+            <button type="button" className="secondary-btn retake-btn" onClick={retakePhoto}>Retake</button>
+          </div>
+        ) : (
+          <div className="photo-capture-options">
+            <button type="button" className="dual-capture-btn" onClick={() => setDualCaptureOpen(true)}>📸📸 Dual Capture</button>
+            <label className="photo-picker-fallback">
+              🖼️ Or choose a single photo
+              <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} hidden />
+            </label>
+          </div>
+        )}
 
         {destination === 'group' ? (
           <>
