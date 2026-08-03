@@ -91,6 +91,17 @@
   box-shadow: 0 8px 20px -6px rgba(124, 58, 237, 0.6);
 }
 
+.login-card > button[type='button'] {
+  margin-top: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--bg);
+}
+
 .login-card button[type='submit']:disabled {
   opacity: 0.5;
   box-shadow: none;
@@ -107,6 +118,25 @@
   font-size: 12px;
   color: var(--text-dim);
   line-height: 145%;
+}
+
+.unverified-block {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  text-align: left;
+}
+
+.unverified-block p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.unverified-block p:first-child {
+  font-weight: 700;
+  margin-bottom: 4px;
 }
 
 /* ---------- App shell ---------- */

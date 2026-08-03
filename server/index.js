@@ -4,24 +4,26 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const { LEVELS } = require('./activities');
+
+// Load server/.env in local dev (Render sets real env vars directly, no .env file there).
+if (fs.existsSync(path.join(__dirname, '.env'))) {
+  process.loadEnvFile(path.join(__dirname, '.env'));
+}
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// A signup/login identifier can be a nickname, an email, or a phone number —
-// whichever the user types is stored as-is and used to log back in.
-const NICKNAME_RE = /^[a-zA-Z0-9_ ]{2,20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-const PHONE_RE = /^\+?[0-9()\-.\s]{7,20}$/;
-function isValidIdentifier(value) {
-  return typeof value === 'string' && value.length <= 50
-    && (NICKNAME_RE.test(value) || EMAIL_RE.test(value) || PHONE_RE.test(value));
-}
+const DISPLAY_NAME_RE = /^[\w .'-]{1,30}$/;
 const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const GROUP_MAX_MEMBERS = 30;
+const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const BCRYPT_COST = 12;
 
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -39,19 +41,13 @@ const upload = multer({
   fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
 });
 
-// --- Auth: password hashing (scrypt, no extra dependency) + opaque session tokens ---
+// --- Auth: bcrypt password hashing + opaque session tokens ---
 function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
+  return bcrypt.hash(password, BCRYPT_COST);
 }
-function verifyPassword(password, stored) {
-  if (!stored) return false;
-  const [salt, hash] = stored.split(':');
-  if (!salt || !hash) return false;
-  const check = crypto.scryptSync(password, salt, 64);
-  const expected = Buffer.from(hash, 'hex');
-  return check.length === expected.length && crypto.timingSafeEqual(check, expected);
+function verifyPassword(password, hash) {
+  if (!hash) return Promise.resolve(false);
+  return bcrypt.compare(password, hash);
 }
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -70,6 +66,48 @@ function requireAuth(req, res, next) {
   req.authUser = user;
   req.authToken = token;
   next();
+}
+function requireVerified(req, res, next) {
+  if (!req.authUser.email_verified) {
+    return res.status(403).json({ error: 'Verify your email before posting — check your inbox for the confirmation link.', code: 'unverified' });
+  }
+  next();
+}
+
+// --- Email verification tokens + Resend ---
+function generateVerifyToken() {
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const expires = new Date(Date.now() + VERIFY_TOKEN_EXPIRY_MS).toISOString();
+  return { token, tokenHash, expires };
+}
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM = process.env.RESEND_FROM || 'The Beast Game <onboarding@resend.dev>';
+const APP_URL = process.env.APP_URL || `http://localhost:${process.env.PORT || 4001}`;
+
+async function sendVerificationEmail(email, token) {
+  const verifyUrl = `${APP_URL}/api/verify?token=${token}`;
+  if (!RESEND_API_KEY) {
+    // Dev fallback: no Resend key configured, so log the link instead of emailing it.
+    console.log(`[dev] Verification link for ${email}:\n${verifyUrl}`);
+    return;
+  }
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: RESEND_FROM,
+      to: email,
+      subject: 'Confirm your email for The Beast Game',
+      html: `<p>Tap the link below to confirm your email and finish signing up for The Beast Game:</p>
+             <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+             <p>This link expires in 24 hours.</p>`,
+    }),
+  });
+  if (!res.ok) {
+    console.error('Resend send failed:', res.status, await res.text().catch(() => ''));
+  }
 }
 function levelForXp(xp) {
   let current = LEVELS[0];
@@ -174,43 +212,81 @@ function serializeGroup(group, viewerUserId) {
 }
 
 // --- Auth ---
-app.post('/api/signup', (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !isValidIdentifier(username)) {
-    return res.status(400).json({ error: 'Enter a nickname, email, or phone number.' });
-  }
-  if (!password || password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-  }
-
-  let user = getUserByUsername(username);
-  if (user && user.password_hash) {
-    return res.status(409).json({ error: 'That nickname is already taken.' });
-  }
-
-  const hash = hashPassword(password);
-  if (user && !user.password_hash) {
-    // Legacy/unclaimed account from before accounts had passwords — claim it.
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
-  } else {
-    const info = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
-    user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-  }
-
-  const token = createSession(user.id);
-  res.status(201).json({ username: user.username, token });
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts — try again in a bit.' },
 });
 
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body || {};
-  const user = getUserByUsername(username || '');
-  if (!user) return res.status(404).json({ error: 'No account with that nickname — sign up instead.' });
-  if (!user.password_hash) return res.status(400).json({ error: 'This account needs a password — use Sign Up to claim it.' });
-  if (!verifyPassword(password || '', user.password_hash)) {
-    return res.status(401).json({ error: 'Wrong password.' });
+app.post('/api/signup', authLimiter, async (req, res) => {
+  const { email, password, displayName } = req.body || {};
+  if (!email || !EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: 'Enter a valid email address.' });
+  }
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  }
+  const name = (displayName || '').trim();
+  if (!name || !DISPLAY_NAME_RE.test(name)) {
+    return res.status(400).json({ error: 'Display name must be 1-30 characters (letters, numbers, spaces, . \' -).' });
+  }
+
+  const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
+  if (existingEmail) return res.status(409).json({ error: 'That email is already registered.' });
+  const existingName = db.prepare('SELECT id FROM users WHERE username = ?').get(name);
+  if (existingName) return res.status(409).json({ error: 'That display name is taken.' });
+
+  const passwordHash = await hashPassword(password);
+  const { token, tokenHash, expires } = generateVerifyToken();
+
+  db.prepare(`
+    INSERT INTO users (username, email, password_hash, email_verified, verify_token_hash, verify_token_expires)
+    VALUES (?, ?, ?, 0, ?, ?)
+  `).run(name, email.toLowerCase(), passwordHash, tokenHash, expires);
+
+  try {
+    await sendVerificationEmail(email, token);
+  } catch (err) {
+    console.error('sendVerificationEmail failed:', err);
+  }
+
+  res.status(201).json({ status: 'pending_verification', email: email.toLowerCase() });
+});
+
+// Hit by clicking the link in the verification email — plain HTML response, no SPA involved.
+app.get('/api/verify', (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const user = token ? db.prepare('SELECT * FROM users WHERE verify_token_hash = ?').get(tokenHash) : null;
+
+  const page = (title, message) => res.type('html').send(`<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
+<style>body{font-family:system-ui,sans-serif;background:#17131f;color:#f1edf9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:24px}
+h1{font-size:22px}p{color:#b3a9c4}</style></head>
+<body><div><h1>${title}</h1><p>${message}</p></div></body></html>`);
+
+  if (!user) return page('Invalid link', 'This verification link is invalid or has already been used.');
+  if (!user.verify_token_expires || new Date(user.verify_token_expires) < new Date()) {
+    return page('Link expired', 'This verification link has expired. Please sign up again.');
+  }
+
+  db.prepare('UPDATE users SET email_verified = 1, verify_token_hash = NULL, verify_token_expires = NULL WHERE id = ?').run(user.id);
+  page('Email verified 🎉', 'You can close this tab and log back in to The Beast Game.');
+});
+
+app.post('/api/login', authLimiter, async (req, res) => {
+  const { email, password } = req.body || {};
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').toLowerCase());
+  if (!user || !user.password_hash) return res.status(404).json({ error: 'No account with that email.' });
+  const ok = await verifyPassword(password || '', user.password_hash);
+  if (!ok) return res.status(401).json({ error: 'Wrong password.' });
+  if (!user.email_verified) {
+    return res.status(403).json({ error: 'Please verify your email first — check your inbox for the confirmation link.', code: 'unverified' });
   }
   const token = createSession(user.id);
-  res.json({ username: user.username, token });
+  res.json({ displayName: user.username, token });
 });
 
 app.post('/api/logout', requireAuth, (req, res) => {
@@ -385,7 +461,7 @@ function serializePost(row, viewerUserId) {
   };
 }
 
-app.post('/api/posts', requireAuth, upload.single('photo'), (req, res) => {
+app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), (req, res) => {
   const creditedBy = req.authUser;
   const body = req.body || {};
   const visibility = body.visibility === 'group' ? 'group' : 'public';
@@ -431,7 +507,7 @@ app.post('/api/posts', requireAuth, upload.single('photo'), (req, res) => {
   res.status(201).json(serializePost(getPostRow(info.lastInsertRowid), creditedBy.id));
 });
 
-app.post('/api/posts/:postId/credit', requireAuth, (req, res) => {
+app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) => {
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });

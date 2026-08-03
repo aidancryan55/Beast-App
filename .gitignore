@@ -9,6 +9,10 @@ server/data.sqlite
 server/data.sqlite-*
 server/uploads/
 
+# Secrets
+.env
+server/.env
+
 # Logs
 *.log
 npm-debug.log*

@@ -11,6 +11,10 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL COLLATE NOCASE,
     password_hash TEXT,
+    email TEXT UNIQUE COLLATE NOCASE,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    verify_token_hash TEXT,
+    verify_token_expires TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -97,10 +101,22 @@ db.exec(`
   );
 `);
 
-// --- Migrations for databases created before `password_hash` existed ---
+// --- Migrations for databases created before `password_hash` / email auth existed ---
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
 if (!userCols.includes('password_hash')) {
   db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+}
+if (!userCols.includes('email')) {
+  db.exec('ALTER TABLE users ADD COLUMN email TEXT UNIQUE COLLATE NOCASE');
+}
+if (!userCols.includes('email_verified')) {
+  db.exec('ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0');
+}
+if (!userCols.includes('verify_token_hash')) {
+  db.exec('ALTER TABLE users ADD COLUMN verify_token_hash TEXT');
+}
+if (!userCols.includes('verify_token_expires')) {
+  db.exec('ALTER TABLE users ADD COLUMN verify_token_expires TEXT');
 }
 
 // --- Migrations for databases created before `repeatable` / `period_key` existed ---

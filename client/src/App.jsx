@@ -2,25 +2,52 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import './App.css';
 
-function LoginScreen({ onAuth }) {
+function LoginScreen({ onLogin, onSignup }) {
   const [mode, setMode] = useState('login');
-  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
+  const [errorCode, setErrorCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checkEmail, setCheckEmail] = useState('');
 
   async function submit(e) {
     e.preventDefault();
     setError('');
+    setErrorCode('');
     setLoading(true);
     try {
-      await onAuth(mode, name.trim(), password);
+      if (mode === 'signup') {
+        await onSignup(email.trim(), password, displayName.trim());
+        setCheckEmail(email.trim());
+      } else {
+        await onLogin(email.trim(), password);
+      }
     } catch (err) {
       setError(err.message);
+      setErrorCode(err.code || '');
     } finally {
       setLoading(false);
     }
   }
+
+  if (checkEmail) {
+    return (
+      <div className="login-screen">
+        <div className="login-card">
+          <div className="login-emoji">📬</div>
+          <h1>Check your email</h1>
+          <p className="tagline">We sent a confirmation link to <strong>{checkEmail}</strong>. Tap it to verify your account, then come back and log in.</p>
+          <button type="button" onClick={() => { setCheckEmail(''); setMode('login'); }}>Back to log in</button>
+        </div>
+      </div>
+    );
+  }
+
+  const canSubmit = mode === 'login'
+    ? email.trim().length > 2 && password.length >= 8
+    : email.trim().length > 2 && password.length >= 8 && displayName.trim().length > 0;
 
   return (
     <div className="login-screen">
@@ -29,29 +56,43 @@ function LoginScreen({ onAuth }) {
         <h1>The Beast Game</h1>
         <p className="tagline">Catch your friends being beasts. Earn Beast Points. Become a Beast.</p>
         <div className="auth-toggle">
-          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Log In</button>
-          <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Sign Up</button>
+          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>Log In</button>
+          <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError(''); }}>Sign Up</button>
         </div>
         <form onSubmit={submit}>
           <input
             autoFocus
-            placeholder="Nickname, email, or phone"
-            value={name}
-            maxLength={50}
-            onChange={(e) => setName(e.target.value)}
+            placeholder="Email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
           />
+          {mode === 'signup' && (
+            <input
+              placeholder="Display name (shown publicly)"
+              value={displayName}
+              maxLength={30}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          )}
           <input
-            placeholder="Password"
+            placeholder="Password (min 8 characters)"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-          <button type="submit" disabled={loading || name.trim().length < 2 || password.length < 6}>
+          <button type="submit" disabled={loading || !canSubmit}>
             {loading ? 'Loading…' : mode === 'login' ? 'Log In' : 'Create Account'}
           </button>
         </form>
-        {error && <p className="error">{error}</p>}
-        <p className="fineprint">Whatever you enter here — nickname, email, or phone — is shown publicly on the leaderboard and on posts anyone can see in Discover. Use a nickname instead if you'd rather not share your real contact info.</p>
+        {error && errorCode === 'unverified' && (
+          <div className="unverified-block">
+            <p>📬 Almost there — verify your email first.</p>
+            <p className="fineprint">Check your inbox for the confirmation link we sent when you signed up.</p>
+          </div>
+        )}
+        {error && errorCode !== 'unverified' && <p className="error">{error}</p>}
+        <p className="fineprint">Your display name is shown publicly on the leaderboard and on posts anyone can see in Discover — your email stays private and is only used to sign in.</p>
       </div>
     </div>
   );
@@ -555,7 +596,7 @@ export default function App() {
     if (stored?.token) api.setToken(stored.token);
     return stored;
   });
-  const username = auth?.username || '';
+  const displayName = auth?.displayName || '';
   const [activities, setActivities] = useState([]);
   const [progress, setProgress] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
@@ -568,12 +609,17 @@ export default function App() {
   const [tab, setTab] = useState('discover');
   const [loadError, setLoadError] = useState('');
 
-  async function handleAuth(mode, name, password) {
-    const result = mode === 'signup' ? await api.signup(name, password) : await api.login(name, password);
+  async function handleLogin(email, password) {
+    const result = await api.login(email, password);
     api.setToken(result.token);
-    const authData = { username: result.username, token: result.token };
+    const authData = { displayName: result.displayName, token: result.token };
     localStorage.setItem('ccq_auth', JSON.stringify(authData));
     setAuth(authData);
+  }
+
+  async function handleSignup(email, password, name) {
+    await api.signup(email, password, name);
+    // Unverified — no session yet. LoginScreen shows a "check your email" state.
   }
 
   async function logout() {
@@ -601,10 +647,10 @@ export default function App() {
     try {
       const [acts, prog, board, discoverRes, groupsRes] = await Promise.all([
         api.getActivities(),
-        api.getProgress(username),
+        api.getProgress(displayName),
         api.getLeaderboard(),
-        api.getDiscover(username),
-        api.getGroups(username),
+        api.getDiscover(displayName),
+        api.getGroups(displayName),
       ]);
       setActivities(acts);
       setProgress(prog);
@@ -621,11 +667,11 @@ export default function App() {
   }
 
   async function refreshDiscover() {
-    setDiscoverFeed(await api.getDiscover(username));
+    setDiscoverFeed(await api.getDiscover(displayName));
   }
 
   async function refreshGroups() {
-    setGroups(await api.getGroups(username));
+    setGroups(await api.getGroups(displayName));
   }
 
   async function refreshGroupFeed(groupId) {
@@ -633,9 +679,9 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (username) refreshAll();
+    if (displayName) refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [username]);
+  }, [displayName]);
 
   async function refreshVisibleFeeds() {
     const jobs = [refreshDiscover()];
@@ -647,7 +693,7 @@ export default function App() {
     await withAuthGuard(async () => {
       await api.createPost({ subjectUsername, activityKey, points, caption, photo, visibility, groupId });
       await refreshVisibleFeeds();
-      const [prog, board] = await Promise.all([api.getProgress(username), api.getLeaderboard()]);
+      const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);
       setLeaderboard(board);
     });
@@ -671,14 +717,14 @@ export default function App() {
     await withAuthGuard(async () => {
       await api.creditPost(postId, points);
       await refreshVisibleFeeds();
-      const [prog, board] = await Promise.all([api.getProgress(username), api.getLeaderboard()]);
+      const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);
       setLeaderboard(board);
     });
   }
 
   async function handleSearchUsers(q) {
-    return api.searchUsers(username, q);
+    return api.searchUsers(displayName, q);
   }
 
   async function handleCreateGroup(name, description) {
@@ -706,7 +752,7 @@ export default function App() {
 
   async function refreshDiscoverGroups(q) {
     setGroupSearchQuery(q);
-    setDiscoverGroupsList(await api.discoverGroups(username, q));
+    setDiscoverGroupsList(await api.discoverGroups(displayName, q));
   }
 
   async function handleOpenGroup(groupId) {
@@ -714,8 +760,8 @@ export default function App() {
     await refreshGroupFeed(groupId);
   }
 
-  if (!username) {
-    return <LoginScreen onAuth={handleAuth} />;
+  if (!displayName) {
+    return <LoginScreen onLogin={handleLogin} onSignup={handleSignup} />;
   }
 
   if (!progress) {
@@ -727,7 +773,7 @@ export default function App() {
       <header className="app-header">
         <div className="app-title">🎓 The Beast Game</div>
         <div className="app-user">
-          <span>{username}</span>
+          <span>{displayName}</span>
           <button className="logout-btn" onClick={logout}>Log out</button>
         </div>
       </header>
@@ -750,7 +796,7 @@ export default function App() {
             discoverFeed={discoverFeed}
             myGroups={groups}
             activities={activities}
-            currentUsername={username}
+            currentUsername={displayName}
             onSubmitPost={handleSubmitPost}
             onReact={handleReact}
             onSave={handleSavePost}
@@ -773,7 +819,7 @@ export default function App() {
             group={groups.find((g) => g.id === activeGroupId)}
             groupFeed={groupFeed}
             activities={activities}
-            currentUsername={username}
+            currentUsername={displayName}
             onBack={() => setActiveGroupId(null)}
             onLeave={handleLeaveGroup}
             onSubmitPost={handleSubmitPost}
@@ -783,7 +829,7 @@ export default function App() {
           />
         )}
         {tab === 'badges' && <BadgesView badges={progress.badges} />}
-        {tab === 'leaderboard' && <LeaderboardView leaderboard={leaderboard} currentUsername={username} />}
+        {tab === 'leaderboard' && <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} />}
       </main>
 
       <footer className="app-footer">
