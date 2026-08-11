@@ -36,6 +36,11 @@ const BEAST_TAG_POINTS = 1;
 // Fixed bonus paid to BOTH sides of a completed dare — same anti-farm logic
 // as BEAST_TAG_POINTS applies here too, so this is not user-configurable.
 const DARE_BONUS_POINTS = 2;
+// Lifetime cap on how many Beast Points any single contributor can pour into
+// one recipient, across every post they've ever credited them on — closes
+// the two-friends-mutually-inflate-each-other farming hole that a per-post
+// cap alone doesn't stop.
+const MAX_CREDIT_PER_CONTRIBUTOR = 100;
 
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -835,6 +840,21 @@ function getPostRow(id) {
 function maxCreditFor(visibility) {
   return visibility === 'group' ? 200 : 50;
 }
+// How many more points `contributorUserId` is still allowed to give
+// `subjectUserId` before hitting the lifetime MAX_CREDIT_PER_CONTRIBUTOR cap.
+// Adds back whatever they've already put on `postId` specifically, since an
+// edit to that post's credit replaces (not adds to) their prior amount there.
+function creditBudgetFor(subjectUserId, contributorUserId, postId) {
+  const totalGiven = db.prepare(`
+    SELECT COALESCE(SUM(points), 0) as total FROM points_ledger
+    WHERE user_id = ? AND contributor_user_id = ?
+  `).get(subjectUserId, contributorUserId).total;
+  const alreadyOnThisPost = db.prepare(`
+    SELECT points FROM points_ledger
+    WHERE user_id = ? AND contributor_user_id = ? AND source_post_id = ? AND source_type = 'crowd_credit'
+  `).get(subjectUserId, contributorUserId, postId)?.points || 0;
+  return MAX_CREDIT_PER_CONTRIBUTOR - totalGiven + alreadyOnThisPost;
+}
 
 function serializePost(row, viewerUserId) {
   const reactions = db.prepare(`SELECT emoji, COUNT(*) as count FROM reactions WHERE post_id = ? GROUP BY emoji`).all(row.id);
@@ -846,6 +866,9 @@ function serializePost(row, viewerUserId) {
   const myCredit = viewerUserId
     ? db.prepare('SELECT points FROM post_credits WHERE post_id = ? AND awarder_user_id = ?').get(row.id, viewerUserId)
     : null;
+  const maxCredit = viewerUserId
+    ? Math.max(0, Math.min(maxCreditFor(row.visibility), creditBudgetFor(row.subject_user_id, viewerUserId, row.id)))
+    : maxCreditFor(row.visibility);
   const createdAtMs = Date.parse(`${row.created_at.replace(' ', 'T')}Z`);
   const expired = !row.saved && Date.now() - createdAtMs > POST_EXPIRY_MS;
 
@@ -865,7 +888,7 @@ function serializePost(row, viewerUserId) {
     points: totalPoints,
     creditorCount,
     myCredit: myCredit ? myCredit.points : null,
-    maxCredit: maxCreditFor(row.visibility),
+    maxCredit,
     caption: row.caption,
     saved: !!row.saved,
     photoUrl: row.photo_url || `/uploads/${row.photo_filename}`,
@@ -971,7 +994,11 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, requirePhone
   }
 
   const points = parseInt((req.body || {}).points, 10);
-  const max = maxCreditFor(post.visibility);
+  const budget = creditBudgetFor(post.subject_user_id, user.id, post.id);
+  if (budget <= 0) {
+    return res.status(400).json({ error: `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points` });
+  }
+  const max = Math.min(maxCreditFor(post.visibility), budget);
   if (!Number.isInteger(points) || points < 1 || points > max) {
     return res.status(400).json({ error: `Points must be between 1 and ${max}` });
   }
