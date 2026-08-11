@@ -468,7 +468,8 @@ app.delete('/api/account', requireAuth, async (req, res) => {
   db.prepare('UPDATE groups SET created_by_user_id = NULL WHERE created_by_user_id = ?').run(user.id);
 
   const photos = db.prepare(`
-    SELECT photo_filename, photo_url FROM posts WHERE subject_user_id = ? OR credited_by_user_id = ?
+    SELECT photo_filename, photo_url, inset_photo_filename, inset_photo_url
+    FROM posts WHERE subject_user_id = ? OR credited_by_user_id = ?
   `).all(user.id, user.id);
 
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, comments, reports, blocks, group_members
@@ -479,6 +480,8 @@ app.delete('/api/account', requireAuth, async (req, res) => {
     // indefinitely — "deletes your posts, photos, and personal data" in the
     // privacy policy has to mean this too, not just the local/ephemeral copy.
     if (photo.photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.photo_url));
+    if (photo.inset_photo_filename) fs.unlink(path.join(uploadsDir, photo.inset_photo_filename), () => {});
+    if (photo.inset_photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.inset_photo_url));
   }
 
   res.json({ status: 'deleted' });
@@ -788,6 +791,7 @@ function serializePost(row, viewerUserId) {
     caption: row.caption,
     saved: !!row.saved,
     photoUrl: row.photo_url || `/uploads/${row.photo_filename}`,
+    insetPhotoUrl: row.inset_photo_url || (row.inset_photo_filename ? `/uploads/${row.inset_photo_filename}` : null),
     createdAt: row.created_at,
     expiresAt: new Date(createdAtMs + POST_EXPIRY_MS).toISOString(),
     expired,
@@ -797,20 +801,23 @@ function serializePost(row, viewerUserId) {
   };
 }
 
-app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), async (req, res) => {
+app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'insetPhoto', maxCount: 1 }]), async (req, res) => {
   const creditedBy = req.authUser;
   const body = req.body || {};
   const visibility = body.visibility === 'group' ? 'group' : 'public';
+  const mainFile = req.files?.photo?.[0];
+  const insetFile = req.files?.insetPhoto?.[0];
 
   const fail = (status, error) => {
-    if (req.file) fs.unlink(req.file.path, () => {});
+    if (mainFile) fs.unlink(mainFile.path, () => {});
+    if (insetFile) fs.unlink(insetFile.path, () => {});
     return res.status(status).json({ error });
   };
 
   const subject = getUserByUsername(body.subjectUsername);
   if (!subject) return fail(404, 'That person does not exist');
   if (subject.id === creditedBy.id) return fail(400, "You can't credit yourself");
-  if (!req.file) return res.status(400).json({ error: 'A photo is required' });
+  if (!mainFile) return fail(400, 'A photo is required');
   if (containsBlockedContent(body.caption)) return fail(400, 'That caption isn\'t allowed.');
   if (isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
 
@@ -856,16 +863,22 @@ app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), asy
   const isAnonymous = visibility === 'public' && body.isAnonymous === 'true';
 
   const info = db.prepare(`
-    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, caption, is_anonymous)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, req.file.filename, body.caption || null, isAnonymous ? 1 : 0);
+    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, inset_photo_filename, caption, is_anonymous)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, mainFile.filename, insetFile ? insetFile.filename : null, body.caption || null, isAnonymous ? 1 : 0);
 
-  // Mirror the photo into durable storage so it can survive the 24h expiry
-  // cleanup for Memories — see uploadPhotoToR2's dev-fallback comment. This
-  // doesn't block the local-disk copy, which still serves the live feed.
-  const photoUrl = await uploadPhotoToR2(req.file.path, req.file.filename);
+  // Mirror the photo(s) into durable storage so they can survive the 24h
+  // expiry cleanup for Memories — see uploadPhotoToR2's dev-fallback comment.
+  // This doesn't block the local-disk copy, which still serves the live feed.
+  const photoUrl = await uploadPhotoToR2(mainFile.path, mainFile.filename);
   if (photoUrl) {
     db.prepare('UPDATE posts SET photo_url = ? WHERE id = ?').run(photoUrl, info.lastInsertRowid);
+  }
+  if (insetFile) {
+    const insetPhotoUrl = await uploadPhotoToR2(insetFile.path, insetFile.filename);
+    if (insetPhotoUrl) {
+      db.prepare('UPDATE posts SET inset_photo_url = ? WHERE id = ?').run(insetPhotoUrl, info.lastInsertRowid);
+    }
   }
 
   // Stored as a post_credits row (awarder = poster) so existing per-post
@@ -1036,6 +1049,8 @@ function deletePostAndFile(postId) {
   if (!post) return;
   fs.unlink(path.join(uploadsDir, post.photo_filename), () => {});
   if (post.photo_url) deletePhotoFromR2(r2KeyFromUrl(post.photo_url));
+  if (post.inset_photo_filename) fs.unlink(path.join(uploadsDir, post.inset_photo_filename), () => {});
+  if (post.inset_photo_url) deletePhotoFromR2(r2KeyFromUrl(post.inset_photo_url));
   db.prepare('DELETE FROM posts WHERE id = ?').run(postId);
 }
 
@@ -1049,6 +1064,7 @@ function expirePostFromFeeds(postId) {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
   if (!post) return;
   fs.unlink(path.join(uploadsDir, post.photo_filename), () => {});
+  if (post.inset_photo_filename) fs.unlink(path.join(uploadsDir, post.inset_photo_filename), () => {});
   if (!post.photo_url) {
     db.prepare('DELETE FROM posts WHERE id = ?').run(postId);
   }

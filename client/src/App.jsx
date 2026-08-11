@@ -160,16 +160,6 @@ async function getCameraStream(facingMode) {
   throw lastErr;
 }
 
-function roundedRectPath(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
 function DualCameraCapture({ onCapture, onCancel }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -215,39 +205,6 @@ function DualCameraCapture({ onCapture, onCancel }) {
     return canvas;
   }
 
-  // mainKey/insetKey pick which shot ('back'/'front') is the full-frame photo
-  // vs the small corner overlay — swapping them is what tapping the inset does.
-  function compose(mainKey, insetKey) {
-    const main = shotsRef.current[mainKey];
-    const inset = shotsRef.current[insetKey];
-    const canvas = document.createElement('canvas');
-    canvas.width = main.width;
-    canvas.height = main.height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(main, 0, 0);
-
-    const overlayW = main.width * 0.32;
-    const overlayH = overlayW * (inset.height / inset.width);
-    const margin = main.width * 0.04;
-    const radius = overlayW * 0.12;
-
-    ctx.save();
-    roundedRectPath(ctx, margin, margin, overlayW, overlayH, radius);
-    ctx.clip();
-    ctx.drawImage(inset, margin, margin, overlayW, overlayH);
-    ctx.restore();
-
-    ctx.lineWidth = main.width * 0.008;
-    ctx.strokeStyle = '#fff';
-    roundedRectPath(ctx, margin, margin, overlayW, overlayH, radius);
-    ctx.stroke();
-
-    canvas.toBlob((blob) => {
-      if (blob) onCapture(blob);
-      else setError('Could not process the photo — try again.');
-    }, 'image/jpeg', 0.88);
-  }
-
   async function handleShutter() {
     if (phase === 'back') {
       shotsRef.current.back = grabFrame();
@@ -263,9 +220,19 @@ function DualCameraCapture({ onCapture, onCancel }) {
     }
   }
 
+  // Both shots get uploaded as separate photos (not flattened into one image)
+  // so viewers can tap to swap which one is big/small right in the feed,
+  // the same way they can here — see PostCard's post-photo-inset button.
   function handleUsePhoto() {
     setPhase('composing');
-    compose(swapped ? 'front' : 'back', swapped ? 'back' : 'front');
+    const mainCanvas = shotsRef.current[swapped ? 'front' : 'back'];
+    const insetCanvas = shotsRef.current[swapped ? 'back' : 'front'];
+    mainCanvas.toBlob((mainBlob) => {
+      insetCanvas.toBlob((insetBlob) => {
+        if (mainBlob && insetBlob) onCapture({ main: mainBlob, inset: insetBlob });
+        else setError('Could not process the photo — try again.');
+      }, 'image/jpeg', 0.88);
+    }, 'image/jpeg', 0.88);
   }
 
   function handleCancel() {
@@ -299,7 +266,7 @@ function DualCameraCapture({ onCapture, onCancel }) {
           </button>
         </div>
         <p className="dual-capture-hint">
-          {phase === 'review' ? 'Tap the small photo to flip which one is on top' : 'Combining your shots…'}
+          {phase === 'review' ? 'Tap the small photo to flip which one is on top' : 'Preparing your photos…'}
         </p>
         {phase === 'review' && (
           <div className="dual-capture-actions">
@@ -338,6 +305,8 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState('');
+  const [insetPhoto, setInsetPhoto] = useState(null);
+  const [insetPreview, setInsetPreview] = useState('');
   const [dualCaptureOpen, setDualCaptureOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -360,17 +329,23 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
     if (!file) return;
     setPhoto(file);
     setPreview(URL.createObjectURL(file));
+    setInsetPhoto(null);
+    setInsetPreview('');
   }
 
-  function handleDualCapture(blob) {
-    setPhoto(blob);
-    setPreview(URL.createObjectURL(blob));
+  function handleDualCapture({ main, inset }) {
+    setPhoto(main);
+    setPreview(URL.createObjectURL(main));
+    setInsetPhoto(inset);
+    setInsetPreview(URL.createObjectURL(inset));
     setDualCaptureOpen(false);
   }
 
   function retakePhoto() {
     setPhoto(null);
     setPreview('');
+    setInsetPhoto(null);
+    setInsetPreview('');
   }
 
   async function submit(e) {
@@ -395,6 +370,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         activityKey: finalActivityKey,
         caption,
         photo,
+        insetPhoto,
         points: pointsNum,
         visibility: destination,
         groupId: destination === 'group' ? groupId : null,
@@ -428,6 +404,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         ) : preview ? (
           <div className="photo-picker has-preview">
             <img src={preview} alt="" className="photo-preview" />
+            {insetPreview && <img src={insetPreview} alt="" className="photo-preview-inset" />}
             <button type="button" className="secondary-btn retake-btn" onClick={retakePhoto}>Retake</button>
           </div>
         ) : (
@@ -667,6 +644,7 @@ function CommentsSection({ post, onComment }) {
 
 function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [swapped, setSwapped] = useState(false); // BeReal-style tap-to-swap, purely local to this viewer
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
   const isPoster = post.creditedByUsername.toLowerCase() === currentUsername.toLowerCase();
   const hoursLeft = post.saved ? null : Math.max(0, Math.ceil((Date.parse(post.expiresAt) - Date.now()) / 3600000));
@@ -705,7 +683,17 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
       {post.caption && <p className="post-card-caption">{post.caption}</p>}
 
       <div className="post-photo-wrap">
-        <img className="post-photo-full" src={post.photoUrl} alt="" />
+        <img className="post-photo-full" src={swapped && post.insetPhotoUrl ? post.insetPhotoUrl : post.photoUrl} alt="" />
+        {post.insetPhotoUrl && (
+          <button
+            type="button"
+            className="post-photo-inset"
+            onClick={() => setSwapped((s) => !s)}
+            aria-label="Swap which photo is on top"
+          >
+            <img src={swapped ? post.photoUrl : post.insetPhotoUrl} alt="" />
+          </button>
+        )}
         <div className="post-points-badge">+{post.points} BP</div>
         <div className="post-photo-actions">
           {[...REACTION_EMOJIS, ...post.reactions.map((r) => r.emoji).filter((e) => !REACTION_EMOJIS.includes(e))].map((emoji) => {
@@ -1348,9 +1336,9 @@ export default function App() {
     await Promise.all(jobs);
   }
 
-  async function handleSubmitPost({ subjectUsername, activityKey, caption, photo, points, visibility, groupId, isAnonymous }) {
+  async function handleSubmitPost({ subjectUsername, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous }) {
     await withAuthGuard(async () => {
-      await api.createPost({ subjectUsername, activityKey, caption, photo, points, visibility, groupId, isAnonymous });
+      await api.createPost({ subjectUsername, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous });
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);

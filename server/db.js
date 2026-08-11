@@ -73,6 +73,8 @@ db.exec(`
     group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
     photo_filename TEXT NOT NULL,
     photo_url TEXT,
+    inset_photo_filename TEXT,
+    inset_photo_url TEXT,
     caption TEXT,
     saved INTEGER NOT NULL DEFAULT 0,
     is_anonymous INTEGER NOT NULL DEFAULT 0,
@@ -274,6 +276,14 @@ if (postCols.length) {
   }
   if (!postCols.includes('photo_url')) {
     db.exec('ALTER TABLE posts ADD COLUMN photo_url TEXT');
+  }
+  // Second photo for BeReal-style dual-camera posts — the small corner shot
+  // that viewers can tap to swap with the main one. Null for single-photo posts.
+  if (!postCols.includes('inset_photo_filename')) {
+    db.exec('ALTER TABLE posts ADD COLUMN inset_photo_filename TEXT');
+  }
+  if (!postCols.includes('inset_photo_url')) {
+    db.exec('ALTER TABLE posts ADD COLUMN inset_photo_url TEXT');
   }
   // Old posts stored a single fixed `points` value with no post_credits row.
   // Backfill one post_credits row per legacy post so totals still add up under the new model.

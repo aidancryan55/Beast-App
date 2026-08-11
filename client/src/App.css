@@ -590,6 +590,16 @@
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
+.photo-preview-inset {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 26%;
+  border-radius: 8px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
 .photo-capture-options {
   display: flex;
   flex-direction: column;
@@ -839,6 +849,24 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
+}
+
+.post-photo-inset {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 30%;
+  border-radius: 10px;
+  border: 2px solid #fff;
+  padding: 0;
+  overflow: hidden;
+  background: black;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.post-photo-inset img {
+  width: 100%;
   display: block;
 }
 
