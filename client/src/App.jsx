@@ -287,14 +287,12 @@ function DualCameraCapture({ onCapture, onCancel }) {
   );
 }
 
-function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClose, onSearchUsers, onCreateActivity, fixedGroupId }) {
+function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearchUsers, onCreateActivity, fixedGroupId }) {
   const [destination, setDestination] = useState(fixedGroupId ? 'group' : 'public');
   const [groupId, setGroupId] = useState(fixedGroupId || myGroups[0]?.id || '');
   const [subjectUsername, setSubjectUsername] = useState('');
   const [subjectQuery, setSubjectQuery] = useState('');
   const [subjectResults, setSubjectResults] = useState([]);
-  const [activityKey, setActivityKey] = useState('');
-  const [useCustomActivity, setUseCustomActivity] = useState(false);
   const [customActivity, setCustomActivity] = useState('');
   const [caption, setCaption] = useState('');
   const [isAnonymous, setIsAnonymous] = useState(false);
@@ -343,8 +341,8 @@ function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClo
     setError('');
     setSubmitting(true);
     try {
-      let finalActivityKey = activityKey;
-      if (useCustomActivity && customActivity.trim()) {
+      let finalActivityKey = null;
+      if (customActivity.trim()) {
         const created = await onCreateActivity(customActivity.trim());
         finalActivityKey = created.key;
       }
@@ -436,32 +434,16 @@ function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClo
           </label>
         )}
 
-        {!useCustomActivity ? (
-          <label>
-            What'd they do? (optional)
-            <select value={activityKey} onChange={(e) => setActivityKey(e.target.value)}>
-              <option value="">Just vibes</option>
-              {activities.map((a) => <option key={a.key} value={a.key}>{a.icon} {a.name}</option>)}
-            </select>
-            <button type="button" className="link-btn" onClick={() => { setUseCustomActivity(true); setActivityKey(''); }}>
-              ✍️ Or name your own
-            </button>
-          </label>
-        ) : (
-          <label>
-            Name it yourself
-            <input
-              type="text"
-              maxLength={40}
-              placeholder="e.g. Fell asleep in the library"
-              value={customActivity}
-              onChange={(e) => setCustomActivity(e.target.value)}
-            />
-            <button type="button" className="link-btn" onClick={() => { setUseCustomActivity(false); setCustomActivity(''); }}>
-              Pick from the list instead
-            </button>
-          </label>
-        )}
+        <label>
+          What'd they do? (optional)
+          <input
+            type="text"
+            maxLength={40}
+            placeholder="e.g. Fell asleep in the library"
+            value={customActivity}
+            onChange={(e) => setCustomActivity(e.target.value)}
+          />
+        </label>
 
         <p className="fineprint">Posting gives them a starter Beast Point — everyone else who sees it can chip in more.</p>
 
@@ -645,13 +627,12 @@ function PostList({ posts, currentUsername, onReact, onSave, onCredit, onReport,
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, activities, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, showComposer, onCloseComposer }) {
+function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, showComposer, onCloseComposer }) {
   return (
     <div className="feed-view">
       {showComposer && (
         <CreatePostForm
           myGroups={myGroups}
-          activities={activities}
           currentUsername={currentUsername}
           onSubmit={onSubmitPost}
           onClose={onCloseComposer}
@@ -715,7 +696,7 @@ function CreateGroupForm({ onCreate, onClose }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, onLeave, onSubmitPost, onReact, onSave, onCredit, onCreateActivity, onReport, onBlock }) {
+function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onSave, onCredit, onCreateActivity, onReport, onBlock }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="group-detail">
@@ -733,7 +714,6 @@ function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, on
         <CreatePostForm
           myGroups={[group]}
           fixedGroupId={group.id}
-          activities={activities}
           currentUsername={currentUsername}
           onSubmit={onSubmitPost}
           onClose={() => setShowForm(false)}
@@ -1215,7 +1195,6 @@ export default function App() {
   });
   const displayName = auth?.displayName || '';
   const isAdmin = !!auth?.isAdmin;
-  const [activities, setActivities] = useState([]);
   const [progress, setProgress] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [discoverFeed, setDiscoverFeed] = useState([]);
@@ -1273,14 +1252,12 @@ export default function App() {
 
   async function refreshAll() {
     try {
-      const [acts, prog, board, discoverRes, groupsRes] = await Promise.all([
-        api.getActivities(),
+      const [prog, board, discoverRes, groupsRes] = await Promise.all([
         api.getProgress(displayName),
         api.getLeaderboard(),
         api.getDiscover(displayName),
         api.getGroups(displayName),
       ]);
-      setActivities(acts);
       setProgress(prog);
       setLeaderboard(board);
       setDiscoverFeed(discoverRes);
@@ -1356,11 +1333,7 @@ export default function App() {
   }
 
   async function handleCreateActivity(name) {
-    return withAuthGuard(async () => {
-      const created = await api.createActivity(name);
-      setActivities((prev) => (prev.some((a) => a.key === created.key) ? prev : [...prev, created]));
-      return created;
-    });
+    return withAuthGuard(() => api.createActivity(name));
   }
 
   async function handleCreateGroup(name, description) {
@@ -1487,7 +1460,6 @@ export default function App() {
           <DiscoverView
             discoverFeed={discoverFeed}
             myGroups={groups}
-            activities={activities}
             currentUsername={displayName}
             onSubmitPost={handleSubmitPost}
             onReact={handleReact}
@@ -1515,7 +1487,6 @@ export default function App() {
           <GroupDetail
             group={groups.find((g) => g.id === activeGroupId)}
             groupFeed={groupFeed}
-            activities={activities}
             currentUsername={displayName}
             onBack={() => setActiveGroupId(null)}
             onLeave={handleLeaveGroup}
