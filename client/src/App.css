@@ -644,6 +644,40 @@
   color: var(--text-dim);
 }
 
+.dual-review-frame {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: black;
+}
+
+.dual-review-main {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dual-review-inset {
+  position: absolute;
+  top: 4%;
+  left: 4%;
+  width: 32%;
+  border-radius: 10px;
+  border: 2px solid #fff;
+  padding: 0;
+  overflow: hidden;
+  background: black;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.dual-review-inset img {
+  width: 100%;
+  display: block;
+}
+
 .dual-capture-actions {
   display: flex;
   align-items: center;

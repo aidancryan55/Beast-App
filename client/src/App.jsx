@@ -174,8 +174,10 @@ function DualCameraCapture({ onCapture, onCancel }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const shotsRef = useRef({});
-  const [phase, setPhase] = useState('back'); // 'back' | 'front' | 'composing'
+  const [phase, setPhase] = useState('back'); // 'back' | 'front' | 'review' | 'composing'
   const [error, setError] = useState('');
+  const [reviewUrls, setReviewUrls] = useState(null); // { back, front } data URLs, only set once both shots exist
+  const [swapped, setSwapped] = useState(false); // which shot is the big one vs the corner inset
 
   function stopStream() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -213,26 +215,29 @@ function DualCameraCapture({ onCapture, onCancel }) {
     return canvas;
   }
 
-  function compose() {
-    const { back, front } = shotsRef.current;
+  // mainKey/insetKey pick which shot ('back'/'front') is the full-frame photo
+  // vs the small corner overlay — swapping them is what tapping the inset does.
+  function compose(mainKey, insetKey) {
+    const main = shotsRef.current[mainKey];
+    const inset = shotsRef.current[insetKey];
     const canvas = document.createElement('canvas');
-    canvas.width = back.width;
-    canvas.height = back.height;
+    canvas.width = main.width;
+    canvas.height = main.height;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(back, 0, 0);
+    ctx.drawImage(main, 0, 0);
 
-    const overlayW = back.width * 0.32;
-    const overlayH = overlayW * (front.height / front.width);
-    const margin = back.width * 0.04;
+    const overlayW = main.width * 0.32;
+    const overlayH = overlayW * (inset.height / inset.width);
+    const margin = main.width * 0.04;
     const radius = overlayW * 0.12;
 
     ctx.save();
     roundedRectPath(ctx, margin, margin, overlayW, overlayH, radius);
     ctx.clip();
-    ctx.drawImage(front, margin, margin, overlayW, overlayH);
+    ctx.drawImage(inset, margin, margin, overlayW, overlayH);
     ctx.restore();
 
-    ctx.lineWidth = back.width * 0.008;
+    ctx.lineWidth = main.width * 0.008;
     ctx.strokeStyle = '#fff';
     roundedRectPath(ctx, margin, margin, overlayW, overlayH, radius);
     ctx.stroke();
@@ -250,9 +255,17 @@ function DualCameraCapture({ onCapture, onCancel }) {
     } else if (phase === 'front') {
       shotsRef.current.front = grabFrame();
       stopStream();
-      setPhase('composing');
-      compose();
+      setReviewUrls({
+        back: shotsRef.current.back.toDataURL('image/jpeg', 0.85),
+        front: shotsRef.current.front.toDataURL('image/jpeg', 0.85),
+      });
+      setPhase('review');
     }
+  }
+
+  function handleUsePhoto() {
+    setPhase('composing');
+    compose(swapped ? 'front' : 'back', swapped ? 'back' : 'front');
   }
 
   function handleCancel() {
@@ -269,19 +282,45 @@ function DualCameraCapture({ onCapture, onCancel }) {
     );
   }
 
+  if (phase === 'review' || phase === 'composing') {
+    const mainUrl = swapped ? reviewUrls.front : reviewUrls.back;
+    const insetUrl = swapped ? reviewUrls.back : reviewUrls.front;
+    return (
+      <div className="dual-capture">
+        <div className="dual-review-frame">
+          <img src={mainUrl} alt="" className="dual-review-main" />
+          <button
+            type="button"
+            className="dual-review-inset"
+            onClick={() => setSwapped((s) => !s)}
+            aria-label="Swap which photo is the main one"
+          >
+            <img src={insetUrl} alt="" />
+          </button>
+        </div>
+        <p className="dual-capture-hint">
+          {phase === 'review' ? 'Tap the small photo to flip which one is on top' : 'Combining your shots…'}
+        </p>
+        {phase === 'review' && (
+          <div className="dual-capture-actions">
+            <button type="button" className="secondary-btn" onClick={handleCancel}>Cancel</button>
+            <button type="button" className="dual-capture-btn" onClick={handleUsePhoto}>Use Photo</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="dual-capture">
       <video ref={videoRef} className={`dual-capture-video ${phase === 'front' ? 'mirrored' : ''}`} playsInline muted autoPlay />
       <p className="dual-capture-hint">
         {phase === 'back' && "1/2 — Capture what you're looking at"}
         {phase === 'front' && '2/2 — Now capture yourself'}
-        {phase === 'composing' && 'Combining your shots…'}
       </p>
       <div className="dual-capture-actions">
         <button type="button" className="secondary-btn" onClick={handleCancel}>Cancel</button>
-        {phase !== 'composing' && (
-          <button type="button" className="shutter-btn" onClick={handleShutter} aria-label="Capture" />
-        )}
+        <button type="button" className="shutter-btn" onClick={handleShutter} aria-label="Capture" />
       </div>
     </div>
   );
