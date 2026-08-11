@@ -885,77 +885,6 @@ function LeaderboardView({ leaderboard, currentUsername }) {
   );
 }
 
-function PhoneVerification() {
-  const [verified, setVerified] = useState(null); // null = still loading
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [codeSent, setCodeSent] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    api.getPhoneStatus().then((r) => setVerified(r.verified)).catch(() => setVerified(false));
-  }, []);
-
-  async function sendCode(e) {
-    e.preventDefault();
-    setError('');
-    setSubmitting(true);
-    try {
-      await api.startPhoneVerify(phone.trim());
-      setCodeSent(true);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function submitCode(e) {
-    e.preventDefault();
-    setError('');
-    setSubmitting(true);
-    try {
-      await api.verifyPhone(code.trim());
-      setVerified(true);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (verified === null) return null;
-
-  return (
-    <section className="friend-section">
-      <h2>Phone Verification</h2>
-      {verified ? (
-        <p className="fineprint">📱 Verified — you can post and credit others.</p>
-      ) : !codeSent ? (
-        <form onSubmit={sendCode}>
-          <p className="fineprint">Required before you can post or credit anyone — helps keep the leaderboard real.</p>
-          <input type="tel" placeholder="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          {error && <p className="error">{error}</p>}
-          <div className="credit-modal-actions">
-            <button type="submit" disabled={submitting || !phone.trim()}>{submitting ? 'Sending…' : 'Send code'}</button>
-          </div>
-        </form>
-      ) : (
-        <form onSubmit={submitCode}>
-          <p className="fineprint">Enter the code we texted you.</p>
-          <input type="text" inputMode="numeric" maxLength={6} placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
-          {error && <p className="error">{error}</p>}
-          <div className="credit-modal-actions">
-            <button type="button" className="secondary-btn" onClick={() => setCodeSent(false)}>Back</button>
-            <button type="submit" disabled={submitting || !code.trim()}>{submitting ? 'Verifying…' : 'Verify'}</button>
-          </div>
-        </form>
-      )}
-    </section>
-  );
-}
-
 function DaresSection({ onSearchUsers }) {
   const [dares, setDares] = useState(null); // null = still loading
   const [targetQuery, setTargetQuery] = useState('');
@@ -1090,8 +1019,6 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
         </div>
         {streak.atRisk && <p className="fineprint">Your bender ends tonight if you don't post today.</p>}
       </section>
-
-      <PhoneVerification />
 
       <section className="friend-section">
         <h2>Memories</h2>

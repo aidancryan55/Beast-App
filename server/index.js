@@ -24,7 +24,6 @@ const DISPLAY_NAME_RE = /^[\w .'-]{1,30}$/;
 const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const GROUP_MAX_MEMBERS = 30;
 const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
-const PHONE_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const BCRYPT_COST = 12;
 // Fixed starter award for being tagged in a post — deliberately NOT
 // poster-chosen. If the poster picked the amount, the leaderboard would be
@@ -91,17 +90,6 @@ function requireVerified(req, res, next) {
   }
   next();
 }
-// Anti-farming gate (see BEAST_TAG_POINTS): every account must verify a real
-// phone number before it can post or credit, raising the cost of fake
-// accounts. Deliberately NOT required at signup/login — only gated here, at
-// the point of posting/crediting — so it's additive to the existing auth
-// flow rather than a rework of it.
-function requirePhoneVerified(req, res, next) {
-  if (!req.authUser.phone_verified) {
-    return res.status(403).json({ error: 'Verify your phone number in Settings before posting.', code: 'phone_unverified' });
-  }
-  next();
-}
 function requireAdmin(req, res, next) {
   if (!req.authUser.is_admin) return res.status(403).json({ error: 'Admins only' });
   next();
@@ -150,47 +138,6 @@ async function sendVerificationEmail(email, token) {
   });
   if (!res.ok) {
     console.error('Resend send failed:', res.status, await res.text().catch(() => ''));
-  }
-}
-
-// --- Phone verification (anti-farming gate) + Twilio ---
-// Naive US-default normalization: a 10-digit number with no country code is
-// assumed +1. Good enough for a US college app; not a general E.164 parser.
-function normalizePhone(raw) {
-  const digits = (raw || '').replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) return digits;
-  if (digits.length === 10) return `+1${digits}`;
-  return digits.startsWith('1') ? `+${digits}` : `+1${digits}`;
-}
-
-function generatePhoneCode() {
-  const code = String(crypto.randomInt(100000, 1000000)); // 6 digits
-  const codeHash = crypto.createHash('sha256').update(code).digest('hex');
-  const expires = new Date(Date.now() + PHONE_CODE_EXPIRY_MS).toISOString();
-  return { code, codeHash, expires };
-}
-
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
-
-async function sendVerificationSms(phone, code) {
-  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_FROM_NUMBER) {
-    // Dev fallback: no Twilio credentials configured, so log the code
-    // instead of texting it. Mirrors sendVerificationEmail's fallback.
-    console.log(`[dev] Phone verification code for ${phone}: ${code}`);
-    return;
-  }
-  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64')}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({ To: phone, From: TWILIO_FROM_NUMBER, Body: `Your Beast Game verification code is ${code}` }),
-  });
-  if (!res.ok) {
-    console.error('Twilio send failed:', res.status, await res.text().catch(() => ''));
   }
 }
 
@@ -497,51 +444,6 @@ h1{font-size:22px}p{color:#b3a9c4}</style></head>
   page('Email verified 🎉', 'You can close this tab and log back in to The Beast Game.');
 });
 
-// --- Phone verification ---
-// Deliberately not part of signup — see requirePhoneVerified. Only the
-// normalized number's hash is ever persisted (uniqueness check), not the raw
-// number; the raw number only exists transiently to pass to the SMS send.
-app.post('/api/phone/start', requireAuth, async (req, res) => {
-  const rawPhone = ((req.body || {}).phone || '').trim();
-  if (!rawPhone) return res.status(400).json({ error: 'Enter a phone number.' });
-
-  const normalized = normalizePhone(rawPhone);
-  if (!/^\+\d{8,15}$/.test(normalized)) {
-    return res.status(400).json({ error: "That doesn't look like a valid phone number." });
-  }
-
-  const phoneHash = crypto.createHash('sha256').update(normalized).digest('hex');
-  const existing = db.prepare('SELECT id FROM users WHERE phone_hash = ? AND id != ?').get(phoneHash, req.authUser.id);
-  if (existing) return res.status(409).json({ error: 'That phone number is already registered to another account.' });
-
-  const { code, codeHash, expires } = generatePhoneCode();
-  db.prepare('UPDATE users SET phone_hash = ?, phone_verify_code_hash = ?, phone_verify_expires = ? WHERE id = ?')
-    .run(phoneHash, codeHash, expires, req.authUser.id);
-
-  try {
-    await sendVerificationSms(normalized, code);
-  } catch (err) {
-    console.error('sendVerificationSms failed:', err);
-  }
-
-  res.json({ status: 'code_sent' });
-});
-
-app.post('/api/phone/verify', requireAuth, (req, res) => {
-  const code = ((req.body || {}).code || '').trim();
-  const user = req.authUser;
-
-  if (!user.phone_verify_code_hash) return res.status(400).json({ error: 'Request a code first.' });
-  if (!user.phone_verify_expires || new Date(user.phone_verify_expires) < new Date()) {
-    return res.status(400).json({ error: 'That code expired — request a new one.' });
-  }
-  const codeHash = crypto.createHash('sha256').update(code).digest('hex');
-  if (codeHash !== user.phone_verify_code_hash) return res.status(400).json({ error: 'Incorrect code.' });
-
-  db.prepare('UPDATE users SET phone_verified = 1, phone_verify_code_hash = NULL, phone_verify_expires = NULL WHERE id = ?').run(user.id);
-  res.json({ status: 'verified' });
-});
-
 app.post('/api/login', authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').toLowerCase());
@@ -633,11 +535,6 @@ app.get('/api/me/streak', requireAuth, (req, res) => {
   res.json(getStreakInfo(req.authUser.id));
 });
 
-// --- Phone verification status ---
-app.get('/api/me/phone', requireAuth, (req, res) => {
-  res.json({ verified: !!req.authUser.phone_verified });
-});
-
 // --- Memories ---
 // Private per-user history of every beast YOU'VE photographed (posts you
 // created, not posts you're tagged in), independent of the public feed's 24h
@@ -664,7 +561,7 @@ app.get('/api/me/memories', requireAuth, (req, res) => {
 // --- Beast Dares ---
 // Basic mechanic only: no premade dare content/templates, no notifications
 // yet — just issue → fulfill via a post → both sides get a small bonus.
-app.post('/api/dares', requireAuth, requireVerified, requirePhoneVerified, (req, res) => {
+app.post('/api/dares', requireAuth, requireVerified, (req, res) => {
   const body = req.body || {};
   const target = getUserByUsername(body.targetUsername);
   if (!target) return res.status(404).json({ error: 'That person does not exist' });
@@ -900,7 +797,7 @@ function serializePost(row, viewerUserId) {
   };
 }
 
-app.post('/api/posts', requireAuth, requireVerified, requirePhoneVerified, upload.single('photo'), async (req, res) => {
+app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), async (req, res) => {
   const creditedBy = req.authUser;
   const body = req.body || {};
   const visibility = body.visibility === 'group' ? 'group' : 'public';
@@ -979,7 +876,7 @@ app.post('/api/posts', requireAuth, requireVerified, requirePhoneVerified, uploa
   res.status(201).json(serializePost(getPostRow(info.lastInsertRowid), creditedBy.id));
 });
 
-app.post('/api/posts/:postId/credit', requireAuth, requireVerified, requirePhoneVerified, (req, res) => {
+app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) => {
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });

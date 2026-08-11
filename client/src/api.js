@@ -44,12 +44,9 @@ export const api = {
   createActivity: (name) => req('/activities', { method: 'POST', body: JSON.stringify({ name }) }),
   getProgress: (displayName) => req(`/users/${encodeURIComponent(displayName)}/progress`),
   getStreak: () => req('/me/streak'),
-  getPhoneStatus: () => req('/me/phone'),
   getMemories: () => req('/me/memories'),
   getDares: () => req('/me/dares'),
   issueDare: (targetUsername, description) => req('/dares', { method: 'POST', body: JSON.stringify({ targetUsername, description }) }),
-  startPhoneVerify: (phone) => req('/phone/start', { method: 'POST', body: JSON.stringify({ phone }) }),
-  verifyPhone: (code) => req('/phone/verify', { method: 'POST', body: JSON.stringify({ code }) }),
   getLeaderboard: () => req('/leaderboard'),
 
   searchUsers: (displayName, q) => req(`/users/${encodeURIComponent(displayName)}/search?q=${encodeURIComponent(q)}`),
