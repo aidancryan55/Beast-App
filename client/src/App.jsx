@@ -1237,9 +1237,9 @@ export default function App() {
     await Promise.all(jobs);
   }
 
-  async function handleSubmitPost({ subjectUsername, activityKey, caption, photo, visibility, groupId, isAnonymous }) {
+  async function handleSubmitPost({ subjectUsername, activityKey, caption, photo, points, visibility, groupId, isAnonymous }) {
     await withAuthGuard(async () => {
-      await api.createPost({ subjectUsername, activityKey, caption, photo, visibility, groupId, isAnonymous });
+      await api.createPost({ subjectUsername, activityKey, caption, photo, points, visibility, groupId, isAnonymous });
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);
