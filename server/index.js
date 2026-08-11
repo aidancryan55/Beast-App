@@ -731,8 +731,11 @@ const POST_JOIN_SQL = `
 function getPostRow(id) {
   return db.prepare(`${POST_JOIN_SQL} WHERE p.id = ?`).get(id);
 }
-function maxCreditFor(visibility) {
-  return visibility === 'group' ? 200 : 50;
+// Per-give ceiling, same 1-100 range as the poster's own starter award —
+// the real backstop against farming is MAX_CREDIT_PER_CONTRIBUTOR below,
+// not a visibility-based split, so public and group posts share this cap.
+function maxCreditFor() {
+  return MAX_CREDIT_PER_CONTRIBUTOR;
 }
 // How many more points `contributorUserId` is still allowed to give
 // `subjectUserId` before hitting the lifetime MAX_CREDIT_PER_CONTRIBUTOR cap.
@@ -766,8 +769,8 @@ function serializePost(row, viewerUserId) {
     ? db.prepare('SELECT points FROM post_credits WHERE post_id = ? AND awarder_user_id = ?').get(row.id, viewerUserId)
     : null;
   const maxCredit = viewerUserId
-    ? Math.max(0, Math.min(maxCreditFor(row.visibility), creditBudgetFor(row.subject_user_id, viewerUserId, row.id)))
-    : maxCreditFor(row.visibility);
+    ? Math.max(0, Math.min(maxCreditFor(), creditBudgetFor(row.subject_user_id, viewerUserId, row.id)))
+    : maxCreditFor();
   const createdAtMs = Date.parse(`${row.created_at.replace(' ', 'T')}Z`);
   const expired = !row.saved && Date.now() - createdAtMs > POST_EXPIRY_MS;
 
@@ -920,7 +923,7 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
   if (budget <= 0) {
     return res.status(400).json({ error: `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points` });
   }
-  const max = Math.min(maxCreditFor(post.visibility), budget);
+  const max = Math.min(maxCreditFor(), budget);
   if (!Number.isInteger(points) || points < 1 || points > max) {
     return res.status(400).json({ error: `Points must be between 1 and ${max}` });
   }
