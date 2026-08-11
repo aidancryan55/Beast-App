@@ -891,6 +891,110 @@
   color: var(--text-dim);
 }
 
+/* ---------- Custom emoji reaction ---------- */
+.custom-reaction-btn {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.custom-reaction-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  border-radius: 999px;
+  padding: 4px 6px;
+}
+
+.custom-reaction-form input {
+  width: 44px;
+  font-size: 14px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  text-align: center;
+}
+
+.custom-reaction-form button[type='submit'] {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: none;
+  background: var(--primary);
+  color: var(--primary-contrast);
+  white-space: nowrap;
+}
+
+.custom-reaction-form .secondary-btn {
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #fff;
+}
+
+/* ---------- Comments ---------- */
+.comments-section {
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comments-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.comment-item {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.comment-item strong {
+  margin-right: 4px;
+}
+
+.comment-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.comment-form input {
+  flex: 1;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.comment-form button[type='submit'] {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: none;
+  background: var(--primary);
+  color: var(--primary-contrast);
+  white-space: nowrap;
+}
+
+.comment-form button[type='submit']:disabled {
+  opacity: 0.5;
+}
+
 /* ---------- Give credit ---------- */
 .give-credit-btn {
   font-size: 12px;

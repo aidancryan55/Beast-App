@@ -471,7 +471,7 @@ app.delete('/api/account', requireAuth, async (req, res) => {
     SELECT photo_filename, photo_url FROM posts WHERE subject_user_id = ? OR credited_by_user_id = ?
   `).all(user.id, user.id);
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, reports, blocks, group_members
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, comments, reports, blocks, group_members
 
   for (const photo of photos) {
     fs.unlink(path.join(uploadsDir, photo.photo_filename), () => {});
@@ -752,6 +752,11 @@ function serializePost(row, viewerUserId) {
   const myReaction = viewerUserId
     ? db.prepare(`SELECT emoji FROM reactions WHERE post_id = ? AND user_id = ?`).get(row.id, viewerUserId)
     : null;
+  const comments = db.prepare(`
+    SELECT c.id, c.body, c.created_at, u.username FROM comments c
+    JOIN users u ON u.id = c.user_id
+    WHERE c.post_id = ? ORDER BY c.created_at ASC
+  `).all(row.id).map((c) => ({ id: c.id, username: c.username, body: c.body, createdAt: c.created_at }));
   const totalPoints = db.prepare('SELECT COALESCE(SUM(points), 0) as total FROM post_credits WHERE post_id = ?').get(row.id).total;
   const creditorCount = db.prepare('SELECT COUNT(*) as n FROM post_credits WHERE post_id = ?').get(row.id).n;
   const myCredit = viewerUserId
@@ -788,6 +793,7 @@ function serializePost(row, viewerUserId) {
     expired,
     reactions,
     myReaction: myReaction ? myReaction.emoji : null,
+    comments,
   };
 }
 
@@ -963,7 +969,9 @@ app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
   if (post.visibility === 'group' && !isGroupMember(post.group_id, user.id)) {
     return res.status(403).json({ error: "You're not in that group" });
   }
-  const { emoji } = req.body || {};
+  // Any emoji is allowed, not just the client's quick-tap set — capped to a
+  // short length so this can't be abused as a free-text field.
+  const emoji = ((req.body || {}).emoji || '').trim().slice(0, 16);
   if (!emoji) return res.status(400).json({ error: 'emoji is required' });
 
   const existing = db.prepare('SELECT * FROM reactions WHERE post_id = ? AND user_id = ?').get(post.id, user.id);
@@ -976,6 +984,22 @@ app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
   }
 
   res.json(serializePost(getPostRow(post.id), user.id));
+});
+
+app.post('/api/posts/:postId/comments', requireAuth, (req, res) => {
+  const user = req.authUser;
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  if (post.visibility === 'group' && !isGroupMember(post.group_id, user.id)) {
+    return res.status(403).json({ error: "You're not in that group" });
+  }
+
+  const body = ((req.body || {}).body || '').trim().slice(0, 300);
+  if (!body) return res.status(400).json({ error: 'Say something first' });
+  if (containsBlockedContent(body)) return res.status(400).json({ error: "That comment isn't allowed." });
+
+  db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?, ?, ?)').run(post.id, user.id, body);
+  res.status(201).json(serializePost(getPostRow(post.id), user.id));
 });
 
 app.post('/api/posts/:postId/save', requireAuth, (req, res) => {

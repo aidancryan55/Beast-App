@@ -74,6 +74,7 @@ export const api = {
     return reqForm('/posts', form);
   },
   reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),
+  commentOnPost: (postId, body) => req(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
   savePost: (postId) => req(`/posts/${postId}/save`, { method: 'POST' }),
   creditPost: (postId, points) => req(`/posts/${postId}/credit`, { method: 'POST', body: JSON.stringify({ points }) }),
   reportPost: (postId, reason) => req(`/posts/${postId}/report`, { method: 'POST', body: JSON.stringify({ reason }) }),

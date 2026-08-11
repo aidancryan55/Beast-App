@@ -559,7 +559,74 @@ function ReportButton({ post, onReport }) {
   );
 }
 
-function PostCard({ post, currentUsername, onReact, onSave, onCredit, onReport, onBlock }) {
+function CustomReaction({ post, onReact }) {
+  const [open, setOpen] = useState(false);
+  const [emoji, setEmoji] = useState('');
+
+  async function submit(e) {
+    e.preventDefault();
+    const value = emoji.trim();
+    if (!value) return;
+    await onReact(post.id, value);
+    setEmoji('');
+    setOpen(false);
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="photo-reaction-btn custom-reaction-btn" onClick={() => setOpen(true)}>
+        ＋
+      </button>
+    );
+  }
+  return (
+    <form className="custom-reaction-form" onSubmit={submit}>
+      <input type="text" maxLength={16} placeholder="🫡" value={emoji} onChange={(e) => setEmoji(e.target.value)} autoFocus />
+      <button type="submit">React</button>
+      <button type="button" className="secondary-btn" onClick={() => setOpen(false)}>×</button>
+    </form>
+  );
+}
+
+function CommentsSection({ post, onComment }) {
+  const [body, setBody] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!body.trim()) return;
+    setError('');
+    setSubmitting(true);
+    try {
+      await onComment(post.id, body.trim());
+      setBody('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="comments-section">
+      {post.comments.length > 0 && (
+        <ul className="comments-list">
+          {post.comments.map((c) => (
+            <li key={c.id} className="comment-item"><strong>{c.username}</strong> {c.body}</li>
+          ))}
+        </ul>
+      )}
+      <form className="comment-form" onSubmit={submit}>
+        <input type="text" maxLength={300} placeholder="Add a comment…" value={body} onChange={(e) => setBody(e.target.value)} />
+        <button type="submit" disabled={submitting || !body.trim()}>Post</button>
+      </form>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
   const isPoster = post.creditedByUsername.toLowerCase() === currentUsername.toLowerCase();
@@ -602,7 +669,7 @@ function PostCard({ post, currentUsername, onReact, onSave, onCredit, onReport, 
         <img className="post-photo-full" src={post.photoUrl} alt="" />
         <div className="post-points-badge">+{post.points} BP</div>
         <div className="post-photo-actions">
-          {REACTION_EMOJIS.map((emoji) => {
+          {[...REACTION_EMOJIS, ...post.reactions.map((r) => r.emoji).filter((e) => !REACTION_EMOJIS.includes(e))].map((emoji) => {
             const count = post.reactions.find((r) => r.emoji === emoji)?.count || 0;
             const mine = post.myReaction === emoji;
             return (
@@ -616,6 +683,7 @@ function PostCard({ post, currentUsername, onReact, onSave, onCredit, onReport, 
               </button>
             );
           })}
+          <CustomReaction post={post} onReact={onReact} />
         </div>
       </div>
 
@@ -628,22 +696,24 @@ function PostCard({ post, currentUsername, onReact, onSave, onCredit, onReport, 
           </button>
         )}
       </div>
+
+      <CommentsSection post={post} onComment={onComment} />
     </div>
   );
 }
 
-function PostList({ posts, currentUsername, onReact, onSave, onCredit, onReport, onBlock, emptyText }) {
+function PostList({ posts, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, emptyText }) {
   if (!posts.length) return <div className="empty-state">{emptyText}</div>;
   return (
     <div className="post-list">
       {posts.map((post) => (
-        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} />
+        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} />
       ))}
     </div>
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, showComposer, onCloseComposer }) {
+function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, showComposer, onCloseComposer }) {
   return (
     <div className="feed-view">
       {showComposer && (
@@ -660,6 +730,7 @@ function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, o
         posts={discoverFeed}
         currentUsername={currentUsername}
         onReact={onReact}
+        onComment={onComment}
         onSave={onSave}
         onCredit={onCredit}
         onReport={onReport}
@@ -712,7 +783,7 @@ function CreateGroupForm({ onCreate, onClose }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onSave, onCredit, onCreateActivity, onReport, onBlock }) {
+function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="group-detail">
@@ -741,6 +812,7 @@ function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSub
         posts={groupFeed}
         currentUsername={currentUsername}
         onReact={onReact}
+        onComment={onComment}
         onSave={onSave}
         onCredit={onCredit}
         onReport={onReport}
@@ -1254,6 +1326,13 @@ export default function App() {
     });
   }
 
+  async function handleComment(postId, body) {
+    await withAuthGuard(async () => {
+      await api.commentOnPost(postId, body);
+      await refreshVisibleFeeds();
+    });
+  }
+
   async function handleSavePost(postId) {
     await withAuthGuard(async () => {
       await api.savePost(postId);
@@ -1406,6 +1485,7 @@ export default function App() {
             currentUsername={displayName}
             onSubmitPost={handleSubmitPost}
             onReact={handleReact}
+            onComment={handleComment}
             onSave={handleSavePost}
             onCredit={handleCreditPost}
             onSearchUsers={handleSearchUsers}
@@ -1435,6 +1515,7 @@ export default function App() {
             onLeave={handleLeaveGroup}
             onSubmitPost={handleSubmitPost}
             onReact={handleReact}
+            onComment={handleComment}
             onSave={handleSavePost}
             onCredit={handleCreditPost}
             onCreateActivity={handleCreateActivity}
