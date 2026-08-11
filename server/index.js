@@ -25,15 +25,9 @@ const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const GROUP_MAX_MEMBERS = 30;
 const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const BCRYPT_COST = 12;
-// Fixed starter award for being tagged in a post — deliberately NOT
-// poster-chosen. If the poster picked the amount, the leaderboard would be
-// farmable on day one (fake alt tags main for max points, or two friends
-// mutually tag each other all day). A fixed starter keeps the initial score
-// out of any single person's hands; crowd credit (still variable, see
-// POST /api/posts/:postId/credit) is where real social proof accrues.
-const BEAST_TAG_POINTS = 1;
-// Fixed bonus paid to BOTH sides of a completed dare — same anti-farm logic
-// as BEAST_TAG_POINTS applies here too, so this is not user-configurable.
+// Fixed bonus paid to BOTH sides of a completed dare — kept fixed since
+// dares are mutual by nature, unlike the poster-chosen tag/crowd credit
+// below, both of which lean on MAX_CREDIT_PER_CONTRIBUTOR instead.
 const DARE_BONUS_POINTS = 2;
 // Lifetime cap on how many Beast Points any single contributor can pour into
 // one recipient, across every post they've ever credited them on — closes
@@ -814,6 +808,19 @@ app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), asy
   if (containsBlockedContent(body.caption)) return fail(400, 'That caption isn\'t allowed.');
   if (isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
 
+  // Poster-chosen starter award (1-100), gated by the same lifetime
+  // MAX_CREDIT_PER_CONTRIBUTOR cap as crowd credit — that cap is what keeps
+  // this from being a farming hole now that it's no longer a fixed amount.
+  const points = parseInt(body.points, 10);
+  const budget = creditBudgetFor(subject.id, creditedBy.id, null);
+  if (budget <= 0) {
+    return fail(400, `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points`);
+  }
+  const maxPoints = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
+  if (!Number.isInteger(points) || points < 1 || points > maxPoints) {
+    return fail(400, `Points must be between 1 and ${maxPoints}`);
+  }
+
   // Optional: this post fulfills a pending dare. The subject of the post
   // (who's actually in the photo) must be who the dare targeted.
   let dare = null;
@@ -855,13 +862,12 @@ app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), asy
     db.prepare('UPDATE posts SET photo_url = ? WHERE id = ?').run(photoUrl, info.lastInsertRowid);
   }
 
-  // Fixed starter credit — see BEAST_TAG_POINTS comment for why this isn't
-  // poster-chosen. Stored as a post_credits row (awarder = poster) so
-  // existing per-post display logic (creditorCount, card totals) needs no
-  // rework, and mirrored into the durable ledger so it survives expiry.
+  // Stored as a post_credits row (awarder = poster) so existing per-post
+  // display logic (creditorCount, card totals) needs no rework, and
+  // mirrored into the durable ledger so it survives expiry.
   db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)')
-    .run(info.lastInsertRowid, creditedBy.id, BEAST_TAG_POINTS);
-  writeLedgerEntry(subject.id, BEAST_TAG_POINTS, 'tag_starter', info.lastInsertRowid, creditedBy.id);
+    .run(info.lastInsertRowid, creditedBy.id, points);
+  writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
 
   updateStreakOnPost(creditedBy.id);
 
@@ -881,10 +887,10 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
   if (post.subject_user_id === user.id) return res.status(400).json({ error: "You can't credit yourself" });
-  // The poster already got the fixed starter credit for this post (see
-  // BEAST_TAG_POINTS) — without this check they could re-hit this endpoint
-  // and, via the ON CONFLICT upsert below, overwrite their own starter
-  // amount up to the max. Crowd credit has to come from someone else.
+  // The poster already set their own starter credit for this post at
+  // creation time — without this check they could re-hit this endpoint
+  // and, via the ON CONFLICT upsert below, overwrite that amount up to the
+  // max. Crowd credit has to come from someone else.
   if (post.credited_by_user_id === user.id) return res.status(400).json({ error: "You already posted this" });
   if (post.visibility === 'group' && !isGroupMember(post.group_id, user.id)) {
     return res.status(403).json({ error: "You're not in that group" });

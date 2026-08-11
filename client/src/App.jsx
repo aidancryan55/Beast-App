@@ -294,6 +294,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const [subjectQuery, setSubjectQuery] = useState('');
   const [subjectResults, setSubjectResults] = useState([]);
   const [customActivity, setCustomActivity] = useState('');
+  const [points, setPoints] = useState(10);
   const [caption, setCaption] = useState('');
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [photo, setPhoto] = useState(null);
@@ -338,6 +339,10 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
     if (!photo) return setError('Add a photo first');
     if (!subjectUsername) return setError(destination === 'group' ? 'Pick who to credit' : 'Search for who to credit');
     if (destination === 'group' && !groupId) return setError('Pick a group');
+    const pointsNum = Number(points);
+    if (!Number.isInteger(pointsNum) || pointsNum < 1 || pointsNum > 100) {
+      return setError('Beast Points must be between 1 and 100');
+    }
     setError('');
     setSubmitting(true);
     try {
@@ -351,6 +356,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         activityKey: finalActivityKey,
         caption,
         photo,
+        points: pointsNum,
         visibility: destination,
         groupId: destination === 'group' ? groupId : null,
         isAnonymous: destination === 'public' && isAnonymous,
@@ -445,7 +451,17 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
           />
         </label>
 
-        <p className="fineprint">Posting gives them a starter Beast Point — everyone else who sees it can chip in more.</p>
+        <label>
+          Beast Points to give (1-100)
+          <input
+            type="number"
+            min="1"
+            max="100"
+            value={points}
+            onChange={(e) => setPoints(e.target.value)}
+          />
+        </label>
+        <p className="fineprint">Everyone else who sees the post can chip in more on top of this.</p>
 
         <label>
           Caption (optional)

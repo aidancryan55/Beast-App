@@ -60,9 +60,10 @@ export const api = {
   leaveGroup: (groupId) => req(`/groups/${groupId}/leave`, { method: 'POST' }),
   getGroupFeed: (groupId) => req(`/groups/${groupId}/feed`),
 
-  createPost: ({ subjectUsername, activityKey, caption, photo, visibility, groupId, isAnonymous, dareId }) => {
+  createPost: ({ subjectUsername, activityKey, caption, photo, visibility, groupId, isAnonymous, dareId, points }) => {
     const form = new FormData();
     form.append('subjectUsername', subjectUsername);
+    form.append('points', points);
     if (activityKey) form.append('activityKey', activityKey);
     if (caption) form.append('caption', caption);
     form.append('photo', photo, photo.name || 'photo.jpg');
