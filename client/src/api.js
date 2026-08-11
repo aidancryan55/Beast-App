@@ -42,7 +42,15 @@ export const api = {
   logout: () => req('/logout', { method: 'POST' }),
 
   getActivities: () => req('/activities'),
+  createActivity: (name) => req('/activities', { method: 'POST', body: JSON.stringify({ name }) }),
   getProgress: (displayName) => req(`/users/${encodeURIComponent(displayName)}/progress`),
+  getStreak: () => req('/me/streak'),
+  getPhoneStatus: () => req('/me/phone'),
+  getMemories: () => req('/me/memories'),
+  getDares: () => req('/me/dares'),
+  issueDare: (targetUsername, description) => req('/dares', { method: 'POST', body: JSON.stringify({ targetUsername, description }) }),
+  startPhoneVerify: (phone) => req('/phone/start', { method: 'POST', body: JSON.stringify({ phone }) }),
+  verifyPhone: (code) => req('/phone/verify', { method: 'POST', body: JSON.stringify({ code }) }),
   getLeaderboard: () => req('/leaderboard'),
 
   searchUsers: (displayName, q) => req(`/users/${encodeURIComponent(displayName)}/search?q=${encodeURIComponent(q)}`),
@@ -56,15 +64,16 @@ export const api = {
   leaveGroup: (groupId) => req(`/groups/${groupId}/leave`, { method: 'POST' }),
   getGroupFeed: (groupId) => req(`/groups/${groupId}/feed`),
 
-  createPost: ({ subjectUsername, activityKey, points, caption, photo, visibility, groupId }) => {
+  createPost: ({ subjectUsername, activityKey, caption, photo, visibility, groupId, isAnonymous, dareId }) => {
     const form = new FormData();
     form.append('subjectUsername', subjectUsername);
     if (activityKey) form.append('activityKey', activityKey);
-    form.append('points', points);
     if (caption) form.append('caption', caption);
     form.append('photo', photo, photo.name || 'photo.jpg');
     form.append('visibility', visibility || 'public');
     if (groupId) form.append('groupId', groupId);
+    if (isAnonymous) form.append('isAnonymous', 'true');
+    if (dareId) form.append('dareId', dareId);
     return reqForm('/posts', form);
   },
   reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),

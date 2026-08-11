@@ -36,7 +36,6 @@ function LoginScreen({ onLogin, onSignup }) {
     return (
       <div className="login-screen">
         <div className="login-card">
-          <div className="login-emoji">📬</div>
           <h1>Check your email</h1>
           <p className="tagline">We sent a confirmation link to <strong>{checkEmail}</strong>. Tap it to verify your account, then come back and log in.</p>
           <button type="button" onClick={() => { setCheckEmail(''); setMode('login'); }}>Back to log in</button>
@@ -51,13 +50,16 @@ function LoginScreen({ onLogin, onSignup }) {
 
   return (
     <div className="login-screen">
+      <div className="login-hero">
+        <div className="login-wordmark">THE BEAST GAME</div>
+        <h1 className="login-headline">Catch your friends<br />being beasts.</h1>
+        <p className="login-subtext">Earn Beast Points. Become a Beast.</p>
+      </div>
+
       <div className="login-card">
-        <div className="login-emoji">🎓🏆🎉</div>
-        <h1>The Beast Game</h1>
-        <p className="tagline">Catch your friends being beasts. Earn Beast Points. Become a Beast.</p>
         <div className="auth-toggle">
+          <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError(''); }}>Create Account</button>
           <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>Log In</button>
-          <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError(''); }}>Sign Up</button>
         </div>
         <form onSubmit={submit}>
           <input
@@ -87,7 +89,7 @@ function LoginScreen({ onLogin, onSignup }) {
         </form>
         {error && errorCode === 'unverified' && (
           <div className="unverified-block">
-            <p>📬 Almost there — verify your email first.</p>
+            <p>Almost there — verify your email first.</p>
             <p className="fineprint">Check your inbox for the confirmation link we sent when you signed up.</p>
           </div>
         )}
@@ -285,22 +287,23 @@ function DualCameraCapture({ onCapture, onCancel }) {
   );
 }
 
-function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClose, onSearchUsers, fixedGroupId }) {
+function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClose, onSearchUsers, onCreateActivity, fixedGroupId }) {
   const [destination, setDestination] = useState(fixedGroupId ? 'group' : 'public');
   const [groupId, setGroupId] = useState(fixedGroupId || myGroups[0]?.id || '');
   const [subjectUsername, setSubjectUsername] = useState('');
   const [subjectQuery, setSubjectQuery] = useState('');
   const [subjectResults, setSubjectResults] = useState([]);
   const [activityKey, setActivityKey] = useState('');
-  const [points, setPoints] = useState(20);
+  const [useCustomActivity, setUseCustomActivity] = useState(false);
+  const [customActivity, setCustomActivity] = useState('');
   const [caption, setCaption] = useState('');
+  const [isAnonymous, setIsAnonymous] = useState(false);
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState('');
   const [dualCaptureOpen, setDualCaptureOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const maxPoints = destination === 'group' ? 200 : 50;
   const selectedGroup = myGroups.find((g) => g.id === Number(groupId));
   const groupMembers = (selectedGroup?.members || []).filter((m) => m.toLowerCase() !== currentUsername.toLowerCase());
 
@@ -340,14 +343,19 @@ function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClo
     setError('');
     setSubmitting(true);
     try {
+      let finalActivityKey = activityKey;
+      if (useCustomActivity && customActivity.trim()) {
+        const created = await onCreateActivity(customActivity.trim());
+        finalActivityKey = created.key;
+      }
       await onSubmit({
         subjectUsername,
-        activityKey,
-        points: Number(points),
+        activityKey: finalActivityKey,
         caption,
         photo,
         visibility: destination,
         groupId: destination === 'group' ? groupId : null,
+        isAnonymous: destination === 'public' && isAnonymous,
       });
       onClose();
     } catch (err) {
@@ -428,23 +436,46 @@ function CreatePostForm({ myGroups, activities, currentUsername, onSubmit, onClo
           </label>
         )}
 
-        <label>
-          What'd they do? (optional)
-          <select value={activityKey} onChange={(e) => setActivityKey(e.target.value)}>
-            <option value="">Just vibes</option>
-            {activities.map((a) => <option key={a.key} value={a.key}>{a.icon} {a.name}</option>)}
-          </select>
-        </label>
+        {!useCustomActivity ? (
+          <label>
+            What'd they do? (optional)
+            <select value={activityKey} onChange={(e) => setActivityKey(e.target.value)}>
+              <option value="">Just vibes</option>
+              {activities.map((a) => <option key={a.key} value={a.key}>{a.icon} {a.name}</option>)}
+            </select>
+            <button type="button" className="link-btn" onClick={() => { setUseCustomActivity(true); setActivityKey(''); }}>
+              ✍️ Or name your own
+            </button>
+          </label>
+        ) : (
+          <label>
+            Name it yourself
+            <input
+              type="text"
+              maxLength={40}
+              placeholder="e.g. Fell asleep in the library"
+              value={customActivity}
+              onChange={(e) => setCustomActivity(e.target.value)}
+            />
+            <button type="button" className="link-btn" onClick={() => { setUseCustomActivity(false); setCustomActivity(''); }}>
+              Pick from the list instead
+            </button>
+          </label>
+        )}
 
-        <label>
-          Beast Points to award (max {maxPoints}{destination === 'public' ? ' — anyone else who sees it can chip in more' : ''})
-          <input type="number" min="1" max={maxPoints} value={points} onChange={(e) => setPoints(e.target.value)} />
-        </label>
+        <p className="fineprint">Posting gives them a starter Beast Point — everyone else who sees it can chip in more.</p>
 
         <label>
           Caption (optional)
           <input type="text" maxLength={140} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="caught him in the wild..." />
         </label>
+
+        {destination === 'public' && (
+          <label className="anon-toggle">
+            <input type="checkbox" checked={isAnonymous} onChange={(e) => setIsAnonymous(e.target.checked)} />
+            🕵️ Post anonymously — hide that it was you who posted this
+          </label>
+        )}
 
         {error && <p className="error">{error}</p>}
 
@@ -531,56 +562,71 @@ function ReportButton({ post, onReport }) {
 }
 
 function PostCard({ post, currentUsername, onReact, onSave, onCredit, onReport, onBlock }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
   const isPoster = post.creditedByUsername.toLowerCase() === currentUsername.toLowerCase();
   const hoursLeft = post.saved ? null : Math.max(0, Math.ceil((Date.parse(post.expiresAt) - Date.now()) / 3600000));
+  const posterName = post.isAnonymous ? 'Anonymous' : post.creditedByUsername;
+  const posterInitial = post.isAnonymous ? '🕵️' : posterName.charAt(0).toUpperCase();
 
   return (
     <div className="post-card">
-      <div className="post-header">
-        <span className="post-credit-line">
-          <strong>{post.creditedByUsername}</strong> caught <strong>{post.subjectUsername}</strong>
-          {post.activityName && <> {post.activityIcon} {post.activityName}</>}
-          <span className={`post-visibility ${post.visibility}`}>
-            {post.visibility === 'group' ? `👥 ${post.groupName}` : '🌎 Public'}
-          </span>
-        </span>
-        <span className="post-points">+{post.points} BP</span>
+      <div className="post-card-head">
+        <div className={`post-avatar ${post.isAnonymous ? 'anon' : ''}`}>{posterInitial}</div>
+        <div className="post-head-text">
+          <div className="post-head-line">
+            <strong className={post.isAnonymous ? 'anon-name' : ''}>{posterName}</strong>
+            <span className="post-head-arrow">caught</span>
+            <strong>{post.subjectUsername}</strong>
+          </div>
+          <div className="post-head-meta">
+            {post.visibility === 'group' ? post.groupName : 'Public'}
+            {post.activityName && <> · {post.activityIcon} {post.activityName}</>}
+            {' · '}{post.saved ? 'saved' : `${hoursLeft}h left`}
+          </div>
+        </div>
+        <button type="button" className="post-menu-btn" onClick={() => setMenuOpen((o) => !o)} aria-label="More options">⋯</button>
+        {menuOpen && (
+          <div className="post-menu-dropdown">
+            <ReportButton post={post} onReport={onReport} />
+            {!isPoster && !post.isAnonymous && (
+              <button type="button" className="flag-btn" onClick={() => onBlock(post.creditedByUsername)}>
+                🚫 Block {post.creditedByUsername}
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      <img className="post-photo" src={post.photoUrl} alt="" />
-      {post.caption && <p className="post-caption">{post.caption}</p>}
-      {post.creditorCount > 1 && <p className="post-creditors">{post.creditorCount} people chipped in points</p>}
-      <div className="post-footer">
-        <div className="post-reactions">
+
+      {post.caption && <p className="post-card-caption">{post.caption}</p>}
+
+      <div className="post-photo-wrap">
+        <img className="post-photo-full" src={post.photoUrl} alt="" />
+        <div className="post-points-badge">+{post.points} BP</div>
+        <div className="post-photo-actions">
           {REACTION_EMOJIS.map((emoji) => {
             const count = post.reactions.find((r) => r.emoji === emoji)?.count || 0;
             const mine = post.myReaction === emoji;
             return (
               <button
                 key={emoji}
-                className={`reaction-btn ${mine ? 'mine' : ''}`}
+                className={`photo-reaction-btn ${mine ? 'mine' : ''}`}
                 onClick={() => onReact(post.id, emoji)}
               >
-                {emoji} {count > 0 ? count : ''}
+                {emoji}
+                {count > 0 && <span className="photo-reaction-count">{count}</span>}
               </button>
             );
           })}
         </div>
-        {!isSubject && <GiveCredit post={post} onCredit={onCredit} />}
-        <div className="post-meta">
-          {post.saved ? <span className="post-saved">💾 saved</span> : <span className="post-expiry">expires in {hoursLeft}h</span>}
-          {isSubject && (
-            <button className="save-btn" onClick={() => onSave(post.id)}>
-              {post.saved ? 'Unsave' : 'Keep forever'}
-            </button>
-          )}
-        </div>
       </div>
-      <div className="post-flags">
-        <ReportButton post={post} onReport={onReport} />
-        {!isPoster && (
-          <button type="button" className="flag-btn" onClick={() => onBlock(post.creditedByUsername)}>
-            🚫 Block {post.creditedByUsername}
+
+      <div className="post-card-footer">
+        {post.creditorCount > 1 && <span className="post-creditors">{post.creditorCount} chipped in</span>}
+        {!isSubject && <GiveCredit post={post} onCredit={onCredit} />}
+        {isSubject && (
+          <button className="save-btn" onClick={() => onSave(post.id)}>
+            {post.saved ? 'Unsave' : 'Keep forever'}
           </button>
         )}
       </div>
@@ -599,19 +645,18 @@ function PostList({ posts, currentUsername, onReact, onSave, onCredit, onReport,
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, activities, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers, onReport, onBlock }) {
-  const [showForm, setShowForm] = useState(false);
+function DiscoverView({ discoverFeed, myGroups, activities, currentUsername, onSubmitPost, onReact, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, showComposer, onCloseComposer }) {
   return (
     <div className="feed-view">
-      <button className="credit-friend-btn" onClick={() => setShowForm(true)}>📸 Post publicly</button>
-      {showForm && (
+      {showComposer && (
         <CreatePostForm
           myGroups={myGroups}
           activities={activities}
           currentUsername={currentUsername}
           onSubmit={onSubmitPost}
-          onClose={() => setShowForm(false)}
+          onClose={onCloseComposer}
           onSearchUsers={onSearchUsers}
+          onCreateActivity={onCreateActivity}
         />
       )}
       <PostList
@@ -670,7 +715,7 @@ function CreateGroupForm({ onCreate, onClose }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, onLeave, onSubmitPost, onReact, onSave, onCredit, onReport, onBlock }) {
+function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, onLeave, onSubmitPost, onReact, onSave, onCredit, onCreateActivity, onReport, onBlock }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="group-detail">
@@ -692,6 +737,7 @@ function GroupDetail({ group, groupFeed, activities, currentUsername, onBack, on
           currentUsername={currentUsername}
           onSubmit={onSubmitPost}
           onClose={() => setShowForm(false)}
+          onCreateActivity={onCreateActivity}
         />
       )}
 
@@ -750,6 +796,64 @@ function GroupsView({ myGroups, discoverGroups, onSearchGroups, onCreateGroup, o
   );
 }
 
+const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+function MemoriesView({ memories, onBack }) {
+  // Group into { "YYYY-MM": { dayNumber: memory } } — first post wins per day.
+  const byMonth = {};
+  for (const m of memories) {
+    const [year, month, day] = m.date.split('-');
+    const key = `${year}-${month}`;
+    if (!byMonth[key]) byMonth[key] = {};
+    const dayNum = Number(day);
+    if (!byMonth[key][dayNum]) byMonth[key][dayNum] = m;
+  }
+  const monthKeys = Object.keys(byMonth).sort().reverse();
+
+  return (
+    <div className="memories-view">
+      <div className="memories-header">
+        <button type="button" className="memories-back" onClick={onBack} aria-label="Back">←</button>
+        <h2>Memories</h2>
+      </div>
+      {monthKeys.length === 0 && (
+        <div className="empty-state">No memories yet — post a beast to start your history.</div>
+      )}
+      {monthKeys.map((key) => {
+        const [year, month] = key.split('-').map(Number);
+        const monthName = new Date(year, month - 1, 1).toLocaleString('default', { month: 'long' });
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const firstWeekday = new Date(year, month - 1, 1).getDay();
+        const days = byMonth[key];
+        const cells = [];
+        for (let i = 0; i < firstWeekday; i++) cells.push(null);
+        for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+        return (
+          <div key={key} className="memories-month">
+            <h3 className="memories-month-title">{monthName} {year}</h3>
+            <div className="memories-weekdays">
+              {WEEKDAY_LABELS.map((w) => <span key={w}>{w}</span>)}
+            </div>
+            <div className="memories-grid">
+              {cells.map((d, i) => {
+                if (d === null) return <div key={`blank-${i}`} className="memories-cell blank" />;
+                const memory = days[d];
+                return (
+                  <div key={d} className={`memories-cell ${memory ? 'has-photo' : ''}`}>
+                    {memory && <img src={memory.photoUrl} alt="" className="memories-thumb" />}
+                    <span className="memories-day-num">{d}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BadgesView({ badges }) {
   if (!badges.length) {
     return <div className="empty-state">No badges yet — catch a beast or get caught being one.</div>;
@@ -801,7 +905,184 @@ function LeaderboardView({ leaderboard, currentUsername }) {
   );
 }
 
-function SettingsView({ blockedUsers, onUnblock, onDeleteAccount }) {
+function PhoneVerification() {
+  const [verified, setVerified] = useState(null); // null = still loading
+  const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.getPhoneStatus().then((r) => setVerified(r.verified)).catch(() => setVerified(false));
+  }, []);
+
+  async function sendCode(e) {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      await api.startPhoneVerify(phone.trim());
+      setCodeSent(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function submitCode(e) {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      await api.verifyPhone(code.trim());
+      setVerified(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (verified === null) return null;
+
+  return (
+    <section className="friend-section">
+      <h2>Phone Verification</h2>
+      {verified ? (
+        <p className="fineprint">📱 Verified — you can post and credit others.</p>
+      ) : !codeSent ? (
+        <form onSubmit={sendCode}>
+          <p className="fineprint">Required before you can post or credit anyone — helps keep the leaderboard real.</p>
+          <input type="tel" placeholder="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          {error && <p className="error">{error}</p>}
+          <div className="credit-modal-actions">
+            <button type="submit" disabled={submitting || !phone.trim()}>{submitting ? 'Sending…' : 'Send code'}</button>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={submitCode}>
+          <p className="fineprint">Enter the code we texted you.</p>
+          <input type="text" inputMode="numeric" maxLength={6} placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+          {error && <p className="error">{error}</p>}
+          <div className="credit-modal-actions">
+            <button type="button" className="secondary-btn" onClick={() => setCodeSent(false)}>Back</button>
+            <button type="submit" disabled={submitting || !code.trim()}>{submitting ? 'Verifying…' : 'Verify'}</button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function DaresSection({ onSearchUsers }) {
+  const [dares, setDares] = useState(null); // null = still loading
+  const [targetQuery, setTargetQuery] = useState('');
+  const [targetUsername, setTargetUsername] = useState('');
+  const [targetResults, setTargetResults] = useState([]);
+  const [description, setDescription] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function refresh() {
+    setDares(await api.getDares());
+  }
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function runTargetSearch(q) {
+    setTargetQuery(q);
+    setTargetUsername('');
+    if (q.trim().length < 1) return setTargetResults([]);
+    setTargetResults(await onSearchUsers(q.trim()));
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!targetUsername) return setError('Search for who to dare');
+    setError('');
+    setSubmitting(true);
+    try {
+      await api.issueDare(targetUsername, description.trim());
+      setTargetUsername('');
+      setTargetQuery('');
+      setDescription('');
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (dares === null) return null;
+  const pendingForMe = dares.filter((d) => !d.isIssuedByMe && d.status === 'pending');
+  const issuedByMe = dares.filter((d) => d.isIssuedByMe);
+
+  return (
+    <section className="friend-section">
+      <h2>Dares</h2>
+      <p className="fineprint">Dare someone to do something — whoever posts a photo of them doing it can mark it as fulfilling the dare, and you both get a bonus.</p>
+
+      {pendingForMe.length > 0 && (
+        <div className="dares-list">
+          <h3 className="dares-sublabel">Dares waiting on you</h3>
+          {pendingForMe.map((d) => (
+            <div key={d.id} className="friend-row">
+              <span>{d.issuerUsername} dared you: "{d.description}"</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {issuedByMe.length > 0 && (
+        <div className="dares-list">
+          <h3 className="dares-sublabel">Dares you've issued</h3>
+          {issuedByMe.map((d) => (
+            <div key={d.id} className="friend-row">
+              <span>{d.targetUsername}: "{d.description}" <span className="friend-status">{d.status}</span></span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={submit} className="dare-form">
+        <input
+          type="text"
+          placeholder="Search who to dare"
+          value={targetUsername || targetQuery}
+          onChange={(e) => runTargetSearch(e.target.value)}
+        />
+        {targetResults.length > 0 && !targetUsername && (
+          <div className="subject-results">
+            {targetResults.map((name) => (
+              <button type="button" key={name} className="subject-result" onClick={() => { setTargetUsername(name); setTargetResults([]); }}>
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
+        <input
+          type="text"
+          maxLength={200}
+          placeholder="What's the dare?"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+        {error && <p className="error">{error}</p>}
+        <button type="submit" disabled={submitting || !targetUsername || !description.trim()}>
+          {submitting ? 'Sending…' : 'Issue dare'}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, onDeleteAccount }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
@@ -821,6 +1102,39 @@ function SettingsView({ blockedUsers, onUnblock, onDeleteAccount }) {
 
   return (
     <div className="settings-view">
+      <section className="friend-section">
+        <h2>Beast Streak</h2>
+        <div className="streak-summary">
+          <span className="streak-summary-current">🔥 {streak.current} day{streak.current === 1 ? '' : 's'}</span>
+          <span className="fineprint">Longest: {streak.longest} day{streak.longest === 1 ? '' : 's'}</span>
+        </div>
+        {streak.atRisk && <p className="fineprint">Your bender ends tonight if you don't post today.</p>}
+      </section>
+
+      <PhoneVerification />
+
+      <section className="friend-section">
+        <h2>Memories</h2>
+        <p className="fineprint">A private history of every beast you've photographed, past the normal 24h.</p>
+        <button type="button" className="friend-action" onClick={onOpenMemories}>📅 Open Memories</button>
+      </section>
+
+      <DaresSection onSearchUsers={onSearchUsers} />
+
+      <section className="friend-section">
+        <h2>Badges {badges.length ? `(${badges.length})` : ''}</h2>
+        <BadgesView badges={badges} />
+      </section>
+
+      {isAdmin && (
+        <section className="friend-section">
+          <h2>Admin</h2>
+          <button type="button" className="friend-action" onClick={onOpenAdmin}>
+            🛡️ Open moderation queue {adminReportCount ? `(${adminReportCount})` : ''}
+          </button>
+        </section>
+      )}
+
       <section className="friend-section">
         <h2>Blocked users</h2>
         {blockedUsers.length === 0 && <div className="empty-state">You haven't blocked anyone.</div>}
@@ -912,8 +1226,16 @@ export default function App() {
   const [groupFeed, setGroupFeed] = useState([]);
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [adminReports, setAdminReports] = useState([]);
+  const [memories, setMemories] = useState([]);
   const [tab, setTab] = useState('discover');
+  const [showComposer, setShowComposer] = useState(false);
   const [loadError, setLoadError] = useState('');
+
+  function openComposer() {
+    setTab('discover');
+    setActiveGroupId(null);
+    setShowComposer(true);
+  }
 
   async function handleLogin(email, password) {
     const result = await api.login(email, password);
@@ -995,9 +1317,9 @@ export default function App() {
     await Promise.all(jobs);
   }
 
-  async function handleSubmitPost({ subjectUsername, activityKey, points, caption, photo, visibility, groupId }) {
+  async function handleSubmitPost({ subjectUsername, activityKey, caption, photo, visibility, groupId, isAnonymous }) {
     await withAuthGuard(async () => {
-      await api.createPost({ subjectUsername, activityKey, points, caption, photo, visibility, groupId });
+      await api.createPost({ subjectUsername, activityKey, caption, photo, visibility, groupId, isAnonymous });
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);
@@ -1031,6 +1353,14 @@ export default function App() {
 
   async function handleSearchUsers(q) {
     return api.searchUsers(displayName, q);
+  }
+
+  async function handleCreateActivity(name) {
+    return withAuthGuard(async () => {
+      const created = await api.createActivity(name);
+      setActivities((prev) => (prev.some((a) => a.key === created.key) ? prev : [...prev, created]));
+      return created;
+    });
   }
 
   async function handleCreateGroup(name, description) {
@@ -1109,9 +1439,14 @@ export default function App() {
     });
   }
 
+  async function refreshMemories() {
+    setMemories(await api.getMemories());
+  }
+
   useEffect(() => {
     if (tab === 'settings') refreshBlockedUsers();
-    if (tab === 'admin' && isAdmin) refreshAdminReports();
+    if ((tab === 'admin' || tab === 'settings') && isAdmin) refreshAdminReports();
+    if (tab === 'memories') refreshMemories();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -1128,28 +1463,24 @@ export default function App() {
       <header className="app-header">
         <div className="app-title">🎓 The Beast Game</div>
         <div className="app-user">
+          {progress.streak.current > 0 && (
+            <span className="streak-badge" title={`Longest: ${progress.streak.longest} days`}>
+              🔥 {progress.streak.current}
+            </span>
+          )}
           <span>{displayName}</span>
           <button className="logout-btn" onClick={logout}>Log out</button>
         </div>
       </header>
 
+      {progress.streak.atRisk && (
+        <div className="streak-risk-banner">
+          🔥 Your bender ends tonight — post to keep it alive
+        </div>
+      )}
+
       <XpBar levelInfo={progress.levelInfo} />
       <PeriodTotals periodTotals={progress.periodTotals} />
-
-      <nav className="tabs">
-        <button className={tab === 'discover' ? 'active' : ''} onClick={() => setTab('discover')}>Discover</button>
-        <button className={tab === 'groups' ? 'active' : ''} onClick={() => { setTab('groups'); setActiveGroupId(null); }}>Groups</button>
-        <button className={tab === 'badges' ? 'active' : ''} onClick={() => setTab('badges')}>
-          Badges {progress.badges.length ? `(${progress.badges.length})` : ''}
-        </button>
-        <button className={tab === 'leaderboard' ? 'active' : ''} onClick={() => setTab('leaderboard')}>Leaderboard</button>
-        <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>⚙️</button>
-        {isAdmin && (
-          <button className={tab === 'admin' ? 'active' : ''} onClick={() => setTab('admin')}>
-            🛡️ Admin {adminReports.length ? `(${adminReports.length})` : ''}
-          </button>
-        )}
-      </nav>
 
       <main className="app-main">
         {tab === 'discover' && (
@@ -1163,8 +1494,11 @@ export default function App() {
             onSave={handleSavePost}
             onCredit={handleCreditPost}
             onSearchUsers={handleSearchUsers}
+            onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
             onBlock={handleBlockUser}
+            showComposer={showComposer}
+            onCloseComposer={() => setShowComposer(false)}
           />
         )}
         {tab === 'groups' && !activeGroupId && (
@@ -1189,21 +1523,55 @@ export default function App() {
             onReact={handleReact}
             onSave={handleSavePost}
             onCredit={handleCreditPost}
+            onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
             onBlock={handleBlockUser}
           />
         )}
-        {tab === 'badges' && <BadgesView badges={progress.badges} />}
         {tab === 'leaderboard' && <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} />}
         {tab === 'settings' && (
-          <SettingsView blockedUsers={blockedUsers} onUnblock={handleUnblockUser} onDeleteAccount={handleDeleteAccount} />
+          <SettingsView
+            streak={progress.streak}
+            badges={progress.badges}
+            isAdmin={isAdmin}
+            adminReportCount={adminReports.length}
+            onOpenAdmin={() => setTab('admin')}
+            onOpenMemories={() => setTab('memories')}
+            onSearchUsers={handleSearchUsers}
+            blockedUsers={blockedUsers}
+            onUnblock={handleUnblockUser}
+            onDeleteAccount={handleDeleteAccount}
+          />
         )}
         {tab === 'admin' && isAdmin && <AdminView reports={adminReports} onResolve={handleResolveReport} />}
+        {tab === 'memories' && <MemoriesView memories={memories} onBack={() => setTab('settings')} />}
       </main>
 
       <footer className="app-footer">
         Everything here is for laughs. Nothing in this app encourages alcohol use — party-related activities are about the memory, not the drink, and any references are intended for those of legal drinking age only.
       </footer>
+
+      <nav className="bottom-nav">
+        <button className={`bottom-nav-btn ${tab === 'discover' ? 'active' : ''}`} onClick={() => setTab('discover')}>
+          <span className="bottom-nav-icon">🏠</span>
+          <span className="bottom-nav-label">Home</span>
+        </button>
+        <button className={`bottom-nav-btn ${tab === 'groups' ? 'active' : ''}`} onClick={() => { setTab('groups'); setActiveGroupId(null); }}>
+          <span className="bottom-nav-icon">👥</span>
+          <span className="bottom-nav-label">Groups</span>
+        </button>
+        <button type="button" className="bottom-nav-camera" onClick={openComposer} aria-label="Post a beast">
+          📸
+        </button>
+        <button className={`bottom-nav-btn ${tab === 'leaderboard' ? 'active' : ''}`} onClick={() => setTab('leaderboard')}>
+          <span className="bottom-nav-icon">🏆</span>
+          <span className="bottom-nav-label">Ranks</span>
+        </button>
+        <button className={`bottom-nav-btn ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>
+          <span className="bottom-nav-icon">⚙️</span>
+          <span className="bottom-nav-label">Profile</span>
+        </button>
+      </nav>
     </div>
   );
 }

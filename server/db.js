@@ -17,6 +17,13 @@ db.exec(`
     verify_token_expires TEXT,
     is_admin INTEGER NOT NULL DEFAULT 0,
     banned INTEGER NOT NULL DEFAULT 0,
+    current_streak INTEGER NOT NULL DEFAULT 0,
+    longest_streak INTEGER NOT NULL DEFAULT 0,
+    last_streak_date TEXT,
+    phone_hash TEXT UNIQUE,
+    phone_verified INTEGER NOT NULL DEFAULT 0,
+    phone_verify_code_hash TEXT,
+    phone_verify_expires TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -34,7 +41,9 @@ db.exec(`
     xp INTEGER NOT NULL,
     rarity TEXT NOT NULL,
     icon TEXT NOT NULL,
-    repeatable TEXT
+    repeatable TEXT,
+    is_custom INTEGER NOT NULL DEFAULT 0,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS completions (
@@ -63,8 +72,10 @@ db.exec(`
     visibility TEXT NOT NULL DEFAULT 'public',
     group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
     photo_filename TEXT NOT NULL,
+    photo_url TEXT,
     caption TEXT,
     saved INTEGER NOT NULL DEFAULT 0,
+    is_anonymous INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -120,6 +131,46 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(blocker_user_id, blocked_user_id)
   );
+
+  -- Persistent points record, independent of posts/photos. posts.* rows
+  -- (and post_credits with them, via its own ON DELETE CASCADE) are ephemeral
+  -- and vanish 24h after posting unless saved — this table is the durable
+  -- source of truth so daily/monthly/yearly totals survive that expiry.
+  -- user_id = who EARNED the points (always the post's subject), never the
+  -- poster/crediter. source_post_id cascades to NULL (not deleted) when the
+  -- originating post is removed, so the earned points persist without a
+  -- dangling reference. contributor_user_id (who gave the credit) similarly
+  -- goes NULL if that person later deletes their account — the recipient's
+  -- earned points are the recipient's own data and must survive that.
+  CREATE TABLE IF NOT EXISTS points_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    points INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+    contributor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    earned_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source_post_id, source_type, contributor_user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_points_ledger_earned_at ON points_ledger(earned_at, user_id);
+
+  -- Beast Dares — basic mechanic only (no premade dare content/templates,
+  -- no notifications yet): one user issues a dare to another in plain text;
+  -- the target fulfills it by attaching the dare when posting; both sides
+  -- get a small ledger-backed point award. completed_post_id cascades to
+  -- NULL (not deleted) so the dare's own record survives if the post itself
+  -- later expires/gets removed.
+  CREATE TABLE IF NOT EXISTS dares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issuer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    completed_post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_dares_target ON dares(target_user_id, status);
 `);
 
 // --- Migrations for databases created before `password_hash` / email auth existed ---
@@ -145,6 +196,34 @@ if (!userCols.includes('is_admin')) {
 if (!userCols.includes('banned')) {
   db.exec('ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0');
 }
+if (!userCols.includes('current_streak')) {
+  db.exec('ALTER TABLE users ADD COLUMN current_streak INTEGER NOT NULL DEFAULT 0');
+}
+if (!userCols.includes('longest_streak')) {
+  db.exec('ALTER TABLE users ADD COLUMN longest_streak INTEGER NOT NULL DEFAULT 0');
+}
+if (!userCols.includes('last_streak_date')) {
+  db.exec('ALTER TABLE users ADD COLUMN last_streak_date TEXT');
+}
+// Note: SQLite's ALTER TABLE ADD COLUMN can't carry a UNIQUE constraint
+// inline (unlike the fresh-DB CREATE TABLE above, where phone_hash IS
+// declared UNIQUE) — so migrated databases get a plain column here, and
+// uniqueness is enforced separately below via a real index instead.
+if (!userCols.includes('phone_hash')) {
+  db.exec('ALTER TABLE users ADD COLUMN phone_hash TEXT');
+}
+if (!userCols.includes('phone_verified')) {
+  db.exec('ALTER TABLE users ADD COLUMN phone_verified INTEGER NOT NULL DEFAULT 0');
+}
+if (!userCols.includes('phone_verify_code_hash')) {
+  db.exec('ALTER TABLE users ADD COLUMN phone_verify_code_hash TEXT');
+}
+if (!userCols.includes('phone_verify_expires')) {
+  db.exec('ALTER TABLE users ADD COLUMN phone_verify_expires TEXT');
+}
+// Safe to run every boot regardless of whether phone_hash already had an
+// inline UNIQUE (fresh DB) or was just ALTER-added above (migrated DB).
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_hash ON users(phone_hash)');
 
 // Auto-promote an admin account by email, so there's no manual DB surgery needed.
 if (process.env.ADMIN_EMAIL) {
@@ -165,6 +244,12 @@ const activityCols = db.prepare('PRAGMA table_info(activities)').all().map((c) =
 if (!activityCols.includes('repeatable')) {
   db.exec('ALTER TABLE activities ADD COLUMN repeatable TEXT');
 }
+if (!activityCols.includes('is_custom')) {
+  db.exec('ALTER TABLE activities ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0');
+}
+if (!activityCols.includes('created_by_user_id')) {
+  db.exec('ALTER TABLE activities ADD COLUMN created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+}
 
 // --- Migrations for databases created before groups/crowd-sourced credits existed ---
 const postCols = db.prepare('PRAGMA table_info(posts)').all().map((c) => c.name);
@@ -174,6 +259,12 @@ if (postCols.length) {
   }
   if (!postCols.includes('group_id')) {
     db.exec('ALTER TABLE posts ADD COLUMN group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE');
+  }
+  if (!postCols.includes('is_anonymous')) {
+    db.exec('ALTER TABLE posts ADD COLUMN is_anonymous INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!postCols.includes('photo_url')) {
+    db.exec('ALTER TABLE posts ADD COLUMN photo_url TEXT');
   }
   // Old posts stored a single fixed `points` value with no post_credits row.
   // Backfill one post_credits row per legacy post so totals still add up under the new model.
@@ -221,8 +312,10 @@ const upsertActivity = db.prepare(`
     repeatable = excluded.repeatable
 `);
 
+// Only prunes built-in activities that were removed from activities.js —
+// user-submitted custom activities (is_custom = 1) are never touched here.
 const deleteStaleActivities = db.prepare(`
-  DELETE FROM activities WHERE key NOT IN (${ACTIVITIES.map(() => '?').join(',')})
+  DELETE FROM activities WHERE is_custom = 0 AND key NOT IN (${ACTIVITIES.map(() => '?').join(',')})
 `);
 
 const seed = db.transaction((activities) => {

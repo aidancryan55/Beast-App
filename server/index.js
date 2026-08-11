@@ -6,6 +6,7 @@ const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const db = require('./db');
 const { LEVELS } = require('./activities');
 
@@ -23,7 +24,18 @@ const DISPLAY_NAME_RE = /^[\w .'-]{1,30}$/;
 const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const GROUP_MAX_MEMBERS = 30;
 const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const PHONE_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const BCRYPT_COST = 12;
+// Fixed starter award for being tagged in a post — deliberately NOT
+// poster-chosen. If the poster picked the amount, the leaderboard would be
+// farmable on day one (fake alt tags main for max points, or two friends
+// mutually tag each other all day). A fixed starter keeps the initial score
+// out of any single person's hands; crowd credit (still variable, see
+// POST /api/posts/:postId/credit) is where real social proof accrues.
+const BEAST_TAG_POINTS = 1;
+// Fixed bonus paid to BOTH sides of a completed dare — same anti-farm logic
+// as BEAST_TAG_POINTS applies here too, so this is not user-configurable.
+const DARE_BONUS_POINTS = 2;
 
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -71,6 +83,17 @@ function requireAuth(req, res, next) {
 function requireVerified(req, res, next) {
   if (!req.authUser.email_verified) {
     return res.status(403).json({ error: 'Verify your email before posting — check your inbox for the confirmation link.', code: 'unverified' });
+  }
+  next();
+}
+// Anti-farming gate (see BEAST_TAG_POINTS): every account must verify a real
+// phone number before it can post or credit, raising the cost of fake
+// accounts. Deliberately NOT required at signup/login — only gated here, at
+// the point of posting/crediting — so it's additive to the existing auth
+// flow rather than a rework of it.
+function requirePhoneVerified(req, res, next) {
+  if (!req.authUser.phone_verified) {
+    return res.status(403).json({ error: 'Verify your phone number in Settings before posting.', code: 'phone_unverified' });
   }
   next();
 }
@@ -124,6 +147,104 @@ async function sendVerificationEmail(email, token) {
     console.error('Resend send failed:', res.status, await res.text().catch(() => ''));
   }
 }
+
+// --- Phone verification (anti-farming gate) + Twilio ---
+// Naive US-default normalization: a 10-digit number with no country code is
+// assumed +1. Good enough for a US college app; not a general E.164 parser.
+function normalizePhone(raw) {
+  const digits = (raw || '').replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) return digits;
+  if (digits.length === 10) return `+1${digits}`;
+  return digits.startsWith('1') ? `+${digits}` : `+1${digits}`;
+}
+
+function generatePhoneCode() {
+  const code = String(crypto.randomInt(100000, 1000000)); // 6 digits
+  const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+  const expires = new Date(Date.now() + PHONE_CODE_EXPIRY_MS).toISOString();
+  return { code, codeHash, expires };
+}
+
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
+
+async function sendVerificationSms(phone, code) {
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_FROM_NUMBER) {
+    // Dev fallback: no Twilio credentials configured, so log the code
+    // instead of texting it. Mirrors sendVerificationEmail's fallback.
+    console.log(`[dev] Phone verification code for ${phone}: ${code}`);
+    return;
+  }
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ To: phone, From: TWILIO_FROM_NUMBER, Body: `Your Beast Game verification code is ${code}` }),
+  });
+  if (!res.ok) {
+    console.error('Twilio send failed:', res.status, await res.text().catch(() => ''));
+  }
+}
+
+// --- Durable photo storage (Cloudflare R2) for Memories ---
+// Render's local disk is ephemeral (wiped on redeploy) and posts already
+// auto-delete after 24h — fine for the live feed, but a "Memories" archive of
+// everything a user has ever posted needs storage that actually survives.
+// Dev fallback: without R2 credentials, uploads just stay on local disk as
+// they always have — Memories will only reflect currently-live (unexpired)
+// posts in that case, since expired rows get hard-deleted same as before.
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL; // e.g. https://pub-xxxx.r2.dev or a custom domain, no trailing slash
+
+const r2Configured = !!(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET_NAME && R2_PUBLIC_URL);
+const r2Client = r2Configured
+  ? new S3Client({
+      region: 'auto',
+      endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
+    })
+  : null;
+
+// Returns the public R2 URL on success, or null if R2 isn't configured / the
+// upload failed — callers must treat null as "stay on local disk," not throw.
+async function uploadPhotoToR2(localFilePath, key) {
+  if (!r2Client) return null;
+  try {
+    const body = fs.readFileSync(localFilePath);
+    await r2Client.send(new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+      Body: body,
+      ContentType: 'image/jpeg',
+    }));
+    return `${R2_PUBLIC_URL}/${key}`;
+  } catch (err) {
+    console.error('R2 upload failed:', err.message);
+    return null;
+  }
+}
+
+async function deletePhotoFromR2(key) {
+  if (!r2Client || !key) return;
+  try {
+    await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
+  } catch (err) {
+    console.error('R2 delete failed:', err.message);
+  }
+}
+
+// photo_url is stored as the full public URL; the R2 object key is always
+// everything after the last '/', since we never nest keys in subfolders.
+function r2KeyFromUrl(photoUrl) {
+  return photoUrl ? photoUrl.slice(photoUrl.lastIndexOf('/') + 1) : null;
+}
+
 function levelForXp(xp) {
   let current = LEVELS[0];
   for (const lvl of LEVELS) {
@@ -170,6 +291,67 @@ function computePeriodTotals(events) {
   return totals;
 }
 
+// --- Beast Streak ("Beast Bender" internally) ---
+// v1 keep-alive condition is "user POSTS a beast that calendar day" — this may
+// later change to "gets credited" instead of "posts", but that's not
+// implemented yet; don't assume credit-based keep-alive elsewhere in the code.
+// Calendar day boundary uses the SERVER process's local timezone (via JS
+// Date), not the poster's own timezone — a deliberate v1 simplification, not
+// an oversight. A user near midnight in a different timezone than the server
+// could see their day boundary land at an unexpected local time.
+function todayDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function yesterdayDateString() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function getStreakInfo(userId) {
+  const user = db.prepare('SELECT current_streak, longest_streak, last_streak_date FROM users WHERE id = ?').get(userId);
+  return {
+    current: user.current_streak,
+    longest: user.longest_streak,
+    // "At risk" means yesterday was the last active day and today hasn't
+    // happened yet for streak purposes — post today or the streak resets.
+    atRisk: user.last_streak_date === yesterdayDateString(),
+  };
+}
+
+// Called once per successful post (see POST /api/posts). Not exported/used
+// anywhere else — keep streak mutation confined to this one call site so the
+// "posts, not credits" v1 rule stays easy to find and change later.
+function updateStreakOnPost(userId) {
+  const today = todayDateString();
+  const user = db.prepare('SELECT current_streak, longest_streak, last_streak_date FROM users WHERE id = ?').get(userId);
+
+  if (user.last_streak_date === today) return; // already posted today, no change
+
+  const newCurrent = user.last_streak_date === yesterdayDateString() ? user.current_streak + 1 : 1;
+  const newLongest = Math.max(user.longest_streak, newCurrent);
+
+  db.prepare('UPDATE users SET current_streak = ?, longest_streak = ?, last_streak_date = ? WHERE id = ?')
+    .run(newCurrent, newLongest, today, userId);
+}
+
+// --- Points ledger ---
+// Durable record of every points-earning event, independent of the post that
+// caused it (see the points_ledger comment in db.js for why). Call this
+// alongside every post_credits write, not instead of it — post_credits stays
+// the live per-post display source (creditorCount, card totals) for the
+// post's 24h life; this is the thing that outlives it. Upserts on
+// (source_post_id, source_type, contributor_user_id) so editing an existing
+// crowd credit updates the ledger amount rather than double-counting it.
+function writeLedgerEntry(recipientUserId, points, sourceType, sourcePostId, contributorUserId) {
+  db.prepare(`
+    INSERT INTO points_ledger (user_id, points, source_type, source_post_id, contributor_user_id)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(source_post_id, source_type, contributor_user_id) DO UPDATE SET points = excluded.points
+  `).run(recipientUserId, points, sourceType, sourcePostId, contributorUserId);
+}
+
 function computeUserStats(userId) {
   // Points from photo-credited posts come from post_credits (many possible
   // awarders per post), so pull each individual credit as its own point event.
@@ -201,6 +383,7 @@ function computeUserStats(userId) {
     badges,
     periodTotals,
     creditedPostCount: creditedPostIds.size,
+    streak: getStreakInfo(userId),
   };
 }
 
@@ -309,6 +492,51 @@ h1{font-size:22px}p{color:#b3a9c4}</style></head>
   page('Email verified 🎉', 'You can close this tab and log back in to The Beast Game.');
 });
 
+// --- Phone verification ---
+// Deliberately not part of signup — see requirePhoneVerified. Only the
+// normalized number's hash is ever persisted (uniqueness check), not the raw
+// number; the raw number only exists transiently to pass to the SMS send.
+app.post('/api/phone/start', requireAuth, async (req, res) => {
+  const rawPhone = ((req.body || {}).phone || '').trim();
+  if (!rawPhone) return res.status(400).json({ error: 'Enter a phone number.' });
+
+  const normalized = normalizePhone(rawPhone);
+  if (!/^\+\d{8,15}$/.test(normalized)) {
+    return res.status(400).json({ error: "That doesn't look like a valid phone number." });
+  }
+
+  const phoneHash = crypto.createHash('sha256').update(normalized).digest('hex');
+  const existing = db.prepare('SELECT id FROM users WHERE phone_hash = ? AND id != ?').get(phoneHash, req.authUser.id);
+  if (existing) return res.status(409).json({ error: 'That phone number is already registered to another account.' });
+
+  const { code, codeHash, expires } = generatePhoneCode();
+  db.prepare('UPDATE users SET phone_hash = ?, phone_verify_code_hash = ?, phone_verify_expires = ? WHERE id = ?')
+    .run(phoneHash, codeHash, expires, req.authUser.id);
+
+  try {
+    await sendVerificationSms(normalized, code);
+  } catch (err) {
+    console.error('sendVerificationSms failed:', err);
+  }
+
+  res.json({ status: 'code_sent' });
+});
+
+app.post('/api/phone/verify', requireAuth, (req, res) => {
+  const code = ((req.body || {}).code || '').trim();
+  const user = req.authUser;
+
+  if (!user.phone_verify_code_hash) return res.status(400).json({ error: 'Request a code first.' });
+  if (!user.phone_verify_expires || new Date(user.phone_verify_expires) < new Date()) {
+    return res.status(400).json({ error: 'That code expired — request a new one.' });
+  }
+  const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+  if (codeHash !== user.phone_verify_code_hash) return res.status(400).json({ error: 'Incorrect code.' });
+
+  db.prepare('UPDATE users SET phone_verified = 1, phone_verify_code_hash = NULL, phone_verify_expires = NULL WHERE id = ?').run(user.id);
+  res.json({ status: 'verified' });
+});
+
 app.post('/api/login', authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').toLowerCase());
@@ -338,14 +566,18 @@ app.delete('/api/account', requireAuth, async (req, res) => {
   // destroying a group other people are still in (see note in db.js).
   db.prepare('UPDATE groups SET created_by_user_id = NULL WHERE created_by_user_id = ?').run(user.id);
 
-  const photoFilenames = db.prepare(`
-    SELECT photo_filename FROM posts WHERE subject_user_id = ? OR credited_by_user_id = ?
-  `).all(user.id, user.id).map((r) => r.photo_filename);
+  const photos = db.prepare(`
+    SELECT photo_filename, photo_url FROM posts WHERE subject_user_id = ? OR credited_by_user_id = ?
+  `).all(user.id, user.id);
 
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, reports, blocks, group_members
 
-  for (const filename of photoFilenames) {
-    fs.unlink(path.join(uploadsDir, filename), () => {});
+  for (const photo of photos) {
+    fs.unlink(path.join(uploadsDir, photo.photo_filename), () => {});
+    // Memories (R2) durable copies would otherwise survive account deletion
+    // indefinitely — "deletes your posts, photos, and personal data" in the
+    // privacy policy has to mean this too, not just the local/ephemeral copy.
+    if (photo.photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.photo_url));
   }
 
   res.json({ status: 'deleted' });
@@ -357,11 +589,110 @@ app.get('/api/activities', (req, res) => {
   res.json(activities);
 });
 
+function slugifyActivityName(name) {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+  return slug || `custom_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+// Users can coin their own activity tag; once created it's shared and reusable
+// by anyone (looked up by its slugified key), not private to the creator.
+app.post('/api/activities', requireAuth, requireVerified, (req, res) => {
+  const name = ((req.body || {}).name || '').trim().slice(0, 40);
+  if (!name) return res.status(400).json({ error: 'Give it a name' });
+  if (containsBlockedContent(name)) return res.status(400).json({ error: "That name isn't allowed." });
+
+  const key = slugifyActivityName(name);
+  db.prepare(`
+    INSERT INTO activities (key, name, category, xp, rarity, icon, is_custom, created_by_user_id)
+    VALUES (?, ?, 'Custom', 10, 'common', '✨', 1, ?)
+    ON CONFLICT(key) DO NOTHING
+  `).run(key, name, req.authUser.id);
+
+  res.status(201).json(db.prepare('SELECT * FROM activities WHERE key = ?').get(key));
+});
+
 // --- Progress ---
 app.get('/api/users/:username/progress', (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json(computeUserStats(user.id));
+});
+
+// --- Beast Streak ---
+app.get('/api/me/streak', requireAuth, (req, res) => {
+  res.json(getStreakInfo(req.authUser.id));
+});
+
+// --- Phone verification status ---
+app.get('/api/me/phone', requireAuth, (req, res) => {
+  res.json({ verified: !!req.authUser.phone_verified });
+});
+
+// --- Memories ---
+// Private per-user history of every beast YOU'VE photographed (posts you
+// created, not posts you're tagged in), independent of the public feed's 24h
+// expiry. expirePostFromFeeds already hard-deletes any row with no durable
+// R2 copy once it ages out, so whatever's still in `posts` here is fair game.
+app.get('/api/me/memories', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    ${POST_JOIN_SQL}
+    WHERE p.credited_by_user_id = ?
+    ORDER BY p.created_at DESC
+  `).all(req.authUser.id);
+  const memories = rows.map((r) => ({
+    id: r.id,
+    date: r.created_at.slice(0, 10),
+    photoUrl: r.photo_url || `/uploads/${r.photo_filename}`,
+    caption: r.caption,
+    subjectUsername: r.subject_username,
+    activityName: r.activity_name || null,
+    activityIcon: r.activity_icon || null,
+  }));
+  res.json(memories);
+});
+
+// --- Beast Dares ---
+// Basic mechanic only: no premade dare content/templates, no notifications
+// yet — just issue → fulfill via a post → both sides get a small bonus.
+app.post('/api/dares', requireAuth, requireVerified, requirePhoneVerified, (req, res) => {
+  const body = req.body || {};
+  const target = getUserByUsername(body.targetUsername);
+  if (!target) return res.status(404).json({ error: 'That person does not exist' });
+  if (target.id === req.authUser.id) return res.status(400).json({ error: "You can't dare yourself" });
+  if (isBlocked(req.authUser.id, target.id)) return res.status(403).json({ error: "You can't dare this person" });
+
+  const description = ((body.description || '').trim()).slice(0, 200);
+  if (!description) return res.status(400).json({ error: 'Say what the dare is.' });
+  if (containsBlockedContent(description)) return res.status(400).json({ error: "That dare isn't allowed." });
+
+  const info = db.prepare('INSERT INTO dares (issuer_user_id, target_user_id, description) VALUES (?, ?, ?)')
+    .run(req.authUser.id, target.id, description);
+  res.status(201).json({ id: info.lastInsertRowid, status: 'pending' });
+});
+
+app.get('/api/me/dares', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT d.*, iss.username as issuer_username, tgt.username as target_username
+    FROM dares d
+    JOIN users iss ON iss.id = d.issuer_user_id
+    JOIN users tgt ON tgt.id = d.target_user_id
+    WHERE d.issuer_user_id = ? OR d.target_user_id = ?
+    ORDER BY d.created_at DESC
+  `).all(req.authUser.id, req.authUser.id);
+  res.json(rows.map((r) => ({
+    id: r.id,
+    description: r.description,
+    status: r.status,
+    issuerUsername: r.issuer_username,
+    targetUsername: r.target_username,
+    isIssuedByMe: r.issuer_user_id === req.authUser.id,
+    createdAt: r.created_at,
+  })));
 });
 
 // --- Leaderboard ---
@@ -518,10 +849,13 @@ function serializePost(row, viewerUserId) {
   const createdAtMs = Date.parse(`${row.created_at.replace(' ', 'T')}Z`);
   const expired = !row.saved && Date.now() - createdAtMs > POST_EXPIRY_MS;
 
+  const isAnonymous = !!row.is_anonymous;
+
   return {
     id: row.id,
     subjectUsername: row.subject_username,
-    creditedByUsername: row.credited_by_username,
+    creditedByUsername: isAnonymous ? 'Anonymous' : row.credited_by_username,
+    isAnonymous,
     activityKey: row.activity_key || null,
     activityName: row.activity_name || null,
     activityIcon: row.activity_icon || null,
@@ -534,7 +868,7 @@ function serializePost(row, viewerUserId) {
     maxCredit: maxCreditFor(row.visibility),
     caption: row.caption,
     saved: !!row.saved,
-    photoUrl: `/uploads/${row.photo_filename}`,
+    photoUrl: row.photo_url || `/uploads/${row.photo_filename}`,
     createdAt: row.created_at,
     expiresAt: new Date(createdAtMs + POST_EXPIRY_MS).toISOString(),
     expired,
@@ -543,7 +877,7 @@ function serializePost(row, viewerUserId) {
   };
 }
 
-app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), (req, res) => {
+app.post('/api/posts', requireAuth, requireVerified, requirePhoneVerified, upload.single('photo'), async (req, res) => {
   const creditedBy = req.authUser;
   const body = req.body || {};
   const visibility = body.visibility === 'group' ? 'group' : 'public';
@@ -560,6 +894,16 @@ app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), (re
   if (containsBlockedContent(body.caption)) return fail(400, 'That caption isn\'t allowed.');
   if (isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
 
+  // Optional: this post fulfills a pending dare. The subject of the post
+  // (who's actually in the photo) must be who the dare targeted.
+  let dare = null;
+  if (body.dareId) {
+    dare = db.prepare('SELECT * FROM dares WHERE id = ?').get(body.dareId);
+    if (!dare) return fail(404, 'Dare not found');
+    if (dare.status !== 'pending') return fail(400, 'That dare was already completed');
+    if (dare.target_user_id !== subject.id) return fail(400, 'This dare is for someone else');
+  }
+
   let groupId = null;
   if (visibility === 'group') {
     const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(body.groupId);
@@ -569,33 +913,59 @@ app.post('/api/posts', requireAuth, requireVerified, upload.single('photo'), (re
     groupId = group.id;
   }
 
-  const points = parseInt(body.points, 10);
-  const max = maxCreditFor(visibility);
-  if (!Number.isInteger(points) || points < 1 || points > max) {
-    return fail(400, `Points must be between 1 and ${max}`);
-  }
-
   let activity = null;
   if (body.activityKey) {
     activity = db.prepare('SELECT * FROM activities WHERE key = ?').get(body.activityKey);
   }
 
-  const info = db.prepare(`
-    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, caption)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, req.file.filename, body.caption || null);
+  // Anonymity is only offered on the public feed, not inside smaller trusted
+  // groups — enforced server-side regardless of what the client sends.
+  const isAnonymous = visibility === 'public' && body.isAnonymous === 'true';
 
+  const info = db.prepare(`
+    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, caption, is_anonymous)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, req.file.filename, body.caption || null, isAnonymous ? 1 : 0);
+
+  // Mirror the photo into durable storage so it can survive the 24h expiry
+  // cleanup for Memories — see uploadPhotoToR2's dev-fallback comment. This
+  // doesn't block the local-disk copy, which still serves the live feed.
+  const photoUrl = await uploadPhotoToR2(req.file.path, req.file.filename);
+  if (photoUrl) {
+    db.prepare('UPDATE posts SET photo_url = ? WHERE id = ?').run(photoUrl, info.lastInsertRowid);
+  }
+
+  // Fixed starter credit — see BEAST_TAG_POINTS comment for why this isn't
+  // poster-chosen. Stored as a post_credits row (awarder = poster) so
+  // existing per-post display logic (creditorCount, card totals) needs no
+  // rework, and mirrored into the durable ledger so it survives expiry.
   db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)')
-    .run(info.lastInsertRowid, creditedBy.id, points);
+    .run(info.lastInsertRowid, creditedBy.id, BEAST_TAG_POINTS);
+  writeLedgerEntry(subject.id, BEAST_TAG_POINTS, 'tag_starter', info.lastInsertRowid, creditedBy.id);
+
+  updateStreakOnPost(creditedBy.id);
+
+  if (dare) {
+    db.prepare(`UPDATE dares SET status = 'completed', completed_post_id = ?, completed_at = datetime('now') WHERE id = ?`)
+      .run(info.lastInsertRowid, dare.id);
+    // Fixed bonus to both sides — see DARE_BONUS_POINTS comment.
+    writeLedgerEntry(dare.issuer_user_id, DARE_BONUS_POINTS, 'dare_bonus', info.lastInsertRowid, dare.target_user_id);
+    writeLedgerEntry(dare.target_user_id, DARE_BONUS_POINTS, 'dare_bonus', info.lastInsertRowid, dare.issuer_user_id);
+  }
 
   res.status(201).json(serializePost(getPostRow(info.lastInsertRowid), creditedBy.id));
 });
 
-app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) => {
+app.post('/api/posts/:postId/credit', requireAuth, requireVerified, requirePhoneVerified, (req, res) => {
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
   if (post.subject_user_id === user.id) return res.status(400).json({ error: "You can't credit yourself" });
+  // The poster already got the fixed starter credit for this post (see
+  // BEAST_TAG_POINTS) — without this check they could re-hit this endpoint
+  // and, via the ON CONFLICT upsert below, overwrite their own starter
+  // amount up to the max. Crowd credit has to come from someone else.
+  if (post.credited_by_user_id === user.id) return res.status(400).json({ error: "You already posted this" });
   if (post.visibility === 'group' && !isGroupMember(post.group_id, user.id)) {
     return res.status(403).json({ error: "You're not in that group" });
   }
@@ -610,6 +980,7 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
     INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)
     ON CONFLICT(post_id, awarder_user_id) DO UPDATE SET points = excluded.points
   `).run(post.id, user.id, points);
+  writeLedgerEntry(post.subject_user_id, points, 'crowd_credit', post.id, user.id);
 
   res.json(serializePost(getPostRow(post.id), user.id));
 });
@@ -702,11 +1073,31 @@ app.post('/api/posts/:postId/report', requireAuth, (req, res) => {
   res.status(201).json({ status: 'reported' });
 });
 
+// Full, permanent removal — used by admin moderation (report resolve:
+// 'remove'/'ban'). Unlike expirePostFromFeeds below, this always deletes the
+// row and BOTH copies of the photo (local + R2) regardless of durability,
+// since removed content must not keep surviving in someone's Memories.
 function deletePostAndFile(postId) {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
   if (!post) return;
   fs.unlink(path.join(uploadsDir, post.photo_filename), () => {});
+  if (post.photo_url) deletePhotoFromR2(r2KeyFromUrl(post.photo_url));
   db.prepare('DELETE FROM posts WHERE id = ?').run(postId);
+}
+
+// Called by the 24h auto-expiry sweep (cleanupExpiredPosts), NOT moderation.
+// Always frees the local disk copy. If a durable R2 copy exists, the row is
+// kept — it's already excluded from public/group feeds via the `expired`
+// flag in serializePost, but stays visible to its poster in Memories. If
+// there's no durable copy (R2 unconfigured), falls back to today's behavior:
+// hard-delete the row, same as deletePostAndFile.
+function expirePostFromFeeds(postId) {
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
+  if (!post) return;
+  fs.unlink(path.join(uploadsDir, post.photo_filename), () => {});
+  if (!post.photo_url) {
+    db.prepare('DELETE FROM posts WHERE id = ?').run(postId);
+  }
 }
 
 // --- Admin moderation queue ---
@@ -716,7 +1107,7 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
   const rows = db.prepare(`
     SELECT r.id, r.reason, r.status, r.created_at,
            reporter.username as reporter_username,
-           p.id as post_id, p.photo_filename, p.caption, p.visibility,
+           p.id as post_id, p.photo_filename, p.photo_url, p.caption, p.visibility,
            su.username as subject_username, cu.username as credited_by_username
     FROM reports r
     JOIN users reporter ON reporter.id = r.reporter_user_id
@@ -733,7 +1124,7 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
     createdAt: r.created_at,
     reporterUsername: r.reporter_username,
     postId: r.post_id,
-    photoUrl: `/uploads/${r.photo_filename}`,
+    photoUrl: r.photo_url || `/uploads/${r.photo_filename}`,
     caption: r.caption,
     visibility: r.visibility,
     subjectUsername: r.subject_username,
@@ -765,7 +1156,7 @@ app.post('/api/admin/reports/:reportId/resolve', requireAuth, requireAdmin, (req
 function cleanupExpiredPosts() {
   const cutoff = new Date(Date.now() - POST_EXPIRY_MS).toISOString().replace('T', ' ').slice(0, 19);
   const expired = db.prepare(`SELECT id FROM posts WHERE saved = 0 AND created_at < ?`).all(cutoff);
-  for (const post of expired) deletePostAndFile(post.id);
+  for (const post of expired) expirePostFromFeeds(post.id);
 }
 cleanupExpiredPosts();
 setInterval(cleanupExpiredPosts, 60 * 60 * 1000);

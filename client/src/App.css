@@ -2,10 +2,39 @@
 .login-screen, .loading-screen {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 32px 24px;
   text-align: center;
+  gap: 36px;
+}
+
+.login-hero {
+  max-width: 480px;
+  width: 100%;
+}
+
+.login-wordmark {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  color: var(--text-dim);
+  margin-bottom: 28px;
+}
+
+.login-headline {
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -1px;
+  margin: 0 0 18px;
+}
+
+.login-subtext {
+  font-size: 16px;
+  color: var(--text-dim);
+  margin: 0;
 }
 
 .login-card {
@@ -13,14 +42,9 @@
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow);
-  padding: 40px 32px;
+  padding: 32px;
   max-width: 420px;
   width: 100%;
-}
-
-.login-emoji {
-  font-size: 40px;
-  margin-bottom: 8px;
 }
 
 .login-card h1 {
@@ -36,27 +60,25 @@
 
 .auth-toggle {
   display: flex;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px;
-  margin-bottom: 16px;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .auth-toggle button {
-  flex: 1;
-  border: none;
-  background: transparent;
-  padding: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 16px;
   border-radius: 999px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-dim);
 }
 
 .auth-toggle button.active {
   background: var(--primary);
-  color: white;
+  color: var(--primary-contrast);
+  border-color: transparent;
 }
 
 .login-card form {
@@ -86,9 +108,9 @@
   padding: 12px 16px;
   border-radius: 12px;
   border: none;
-  color: white;
+  color: var(--primary-contrast);
   background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  box-shadow: 0 8px 20px -6px rgba(124, 58, 237, 0.6);
+  box-shadow: 0 8px 20px -6px rgba(0, 0, 0, 0.35);
 }
 
 .login-card > button[type='button'] {
@@ -143,7 +165,7 @@
 .app {
   max-width: 880px;
   margin: 0 auto;
-  padding: 20px 16px 60px;
+  padding: 20px 16px 110px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -228,33 +250,67 @@
   color: var(--text-dim);
 }
 
-/* ---------- Tabs ---------- */
-.tabs {
+/* ---------- Bottom nav (floating, fixed) ---------- */
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
-  gap: 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px;
-  width: fit-content;
-  max-width: 100%;
-  overflow-x: auto;
+  align-items: center;
+  justify-content: space-around;
+  gap: 4px;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border);
+  z-index: 20;
 }
 
-.tabs button {
+.bottom-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
   border: none;
-  background: transparent;
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-weight: 600;
-  font-size: 13px;
+  background: none;
+  padding: 4px 8px;
   color: var(--text-dim);
-  white-space: nowrap;
+  flex: 1;
+  max-width: 84px;
 }
 
-.tabs button.active {
+.bottom-nav-btn.active {
+  color: var(--text);
+}
+
+.bottom-nav-icon {
+  font-size: 21px;
+  line-height: 1;
+}
+
+.bottom-nav-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+
+.bottom-nav-camera {
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  border-radius: 50%;
   background: var(--primary);
-  color: white;
+  color: var(--primary-contrast);
+  border: 3px solid var(--surface);
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 16px -4px rgba(0, 0, 0, 0.4);
+  margin-top: -20px;
 }
 
 /* ---------- Badges ---------- */
@@ -405,7 +461,7 @@
   border-radius: 999px;
   border: none;
   background: var(--primary);
-  color: white;
+  color: var(--primary-contrast);
 }
 
 .friend-action.decline,
@@ -429,9 +485,9 @@
   padding: 14px;
   border-radius: 14px;
   border: none;
-  color: white;
+  color: var(--primary-contrast);
   background: linear-gradient(135deg, var(--primary), var(--accent));
-  box-shadow: 0 8px 20px -6px rgba(124, 58, 237, 0.5);
+  box-shadow: 0 8px 20px -6px rgba(0, 0, 0, 0.3);
 }
 
 .credit-friend-btn:disabled {
@@ -553,7 +609,7 @@
   border-radius: 999px;
   border: none;
   background: var(--primary);
-  color: white;
+  color: var(--primary-contrast);
 }
 
 .photo-picker-fallback {
@@ -619,7 +675,7 @@
 }
 
 .credit-modal-actions button[type='submit'] {
-  color: white;
+  color: var(--primary-contrast);
   background: linear-gradient(135deg, var(--primary), var(--primary-dark));
 }
 
@@ -636,83 +692,188 @@
 .post-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 22px;
 }
 
 .post-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 20px;
   overflow: hidden;
   box-shadow: var(--shadow);
 }
 
-.post-header {
+.post-card-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 12px 14px 8px;
+  position: relative;
 }
 
-.post-credit-line {
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.post-points {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--accent);
-  white-space: nowrap;
-}
-
-.post-photo {
-  width: 100%;
-  max-height: 420px;
-  object-fit: cover;
-  display: block;
+.post-avatar {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 50%;
   background: var(--bg);
-}
-
-.post-caption {
-  padding: 10px 14px 0;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
   font-size: 14px;
 }
 
-.post-footer {
+.post-avatar.anon {
+  font-size: 16px;
+}
+
+.post-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.post-head-line {
+  font-size: 14px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.post-head-arrow {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.post-head-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.post-menu-btn {
+  background: none;
+  border: none;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-dim);
+  padding: 4px 6px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.post-menu-dropdown {
+  position: absolute;
+  top: 42px;
+  right: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  z-index: 5;
+  min-width: 220px;
+}
+
+.post-card-caption {
+  margin: 0;
+  padding: 0 14px 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.post-photo-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  background: var(--bg);
+}
+
+.post-photo-full {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.post-points-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 10px;
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+}
+
+.post-photo-actions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 10px 10px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent);
+}
+
+.photo-reaction-btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-reaction-btn.mine {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: transparent;
+}
+
+.photo-reaction-count {
+  position: absolute;
+  bottom: -5px;
+  right: -5px;
+  background: var(--primary);
+  color: var(--primary-contrast);
+  font-size: 9px;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 1px 5px;
+  min-width: 15px;
+  text-align: center;
+  border: 1px solid var(--surface);
+}
+
+.post-card-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px 14px;
-}
-
-.post-reactions {
-  display: flex;
-  gap: 4px;
-}
-
-.reaction-btn {
-  font-size: 13px;
-  padding: 5px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.reaction-btn.mine {
-  border-color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 15%, transparent);
-}
-
-.post-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-dim);
 }
 
 .save-btn {
@@ -725,20 +886,7 @@
   color: var(--primary-dark);
 }
 
-.post-visibility {
-  display: block;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-dim);
-  margin-top: 4px;
-}
-
-.post-visibility.public {
-  color: var(--accent);
-}
-
 .post-creditors {
-  padding: 0 14px;
   font-size: 12px;
   color: var(--text-dim);
 }
@@ -778,7 +926,7 @@
   border-radius: 999px;
   border: none;
   background: var(--primary);
-  color: white;
+  color: var(--primary-contrast);
 }
 
 .give-credit-form .secondary-btn {
@@ -931,13 +1079,7 @@
 }
 
 /* ---------- Report / block (Apple 1.2 moderation controls) ---------- */
-.post-flags {
-  display: flex;
-  gap: 8px;
-  padding: 8px 14px 14px;
-  flex-wrap: wrap;
-}
-
+/* Rendered inside .post-menu-dropdown (the "⋯" menu on each post-card-head) */
 .flag-btn {
   font-size: 11px;
   color: var(--text-dim);
@@ -981,7 +1123,7 @@
   border-radius: 999px;
   border: none;
   background: var(--primary);
-  color: white;
+  color: var(--primary-contrast);
 }
 
 /* ---------- Settings / admin ---------- */
@@ -1010,4 +1152,211 @@
   width: 100%;
   border-radius: 12px;
   margin-bottom: 8px;
+}
+
+.link-btn {
+  align-self: flex-start;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--primary);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.anon-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.anon-toggle input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+}
+
+.anon-name {
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+/* ---------- Beast Streak ---------- */
+.streak-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+
+.streak-risk-banner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.streak-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.streak-summary-current {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+/* ---------- Memories (calendar grid) ---------- */
+.memories-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.memories-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.memories-back {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  width: 34px;
+  height: 34px;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memories-header h2 {
+  font-size: 18px;
+}
+
+.memories-month-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.memories-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.memories-weekdays span {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-align: center;
+  letter-spacing: 0.3px;
+}
+
+.memories-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.memories-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.memories-cell.blank {
+  background: none;
+  border: none;
+}
+
+.memories-cell.has-photo {
+  border-color: transparent;
+}
+
+.memories-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.memories-day-num {
+  position: relative;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.memories-cell.has-photo .memories-day-num {
+  color: white;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* ---------- Dares (basic mechanic) ---------- */
+.dares-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dares-sublabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.dare-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
+.dare-form input {
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.dare-form button[type='submit'] {
+  align-self: flex-start;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: none;
+  background: var(--primary);
+  color: var(--primary-contrast);
 }
