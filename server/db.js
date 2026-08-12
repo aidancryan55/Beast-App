@@ -165,10 +165,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_points_ledger_earned_at ON points_ledger(earned_at, user_id);
 
-  -- Beast Dares — basic mechanic only (no premade dare content/templates,
-  -- no notifications yet): one user issues a dare to another in plain text;
-  -- the target fulfills it by attaching the dare when posting; both sides
-  -- get a small ledger-backed point award. completed_post_id cascades to
+  -- Beast Dares — one user issues a dare to another, staking wager_points of
+  -- their own as the prize; the target fulfills it by attaching the dare
+  -- when posting, which pays the wager from issuer to target (see
+  -- 'dare_wager' in the points ledger). completed_post_id cascades to
   -- NULL (not deleted) so the dare's own record survives if the post itself
   -- later expires/gets removed.
   CREATE TABLE IF NOT EXISTS dares (
@@ -176,6 +176,7 @@ db.exec(`
     issuer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     target_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
+    wager_points INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
     completed_post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -294,6 +295,11 @@ if (postCols.length) {
       WHERE points IS NOT NULL
     `);
   }
+}
+
+const dareCols = db.prepare('PRAGMA table_info(dares)').all().map((c) => c.name);
+if (dareCols.length && !dareCols.includes('wager_points')) {
+  db.exec('ALTER TABLE dares ADD COLUMN wager_points INTEGER NOT NULL DEFAULT 0');
 }
 
 const completionCols = db.prepare('PRAGMA table_info(completions)').all().map((c) => c.name);

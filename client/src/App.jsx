@@ -1006,6 +1006,7 @@ function DaresSection({ onSearchUsers }) {
   const [targetUsername, setTargetUsername] = useState('');
   const [targetResults, setTargetResults] = useState([]);
   const [description, setDescription] = useState('');
+  const [wager, setWager] = useState(10);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -1028,10 +1029,14 @@ function DaresSection({ onSearchUsers }) {
   async function submit(e) {
     e.preventDefault();
     if (!targetUsername) return setError('Search for who to dare');
+    const wagerNum = Number(wager);
+    if (!Number.isInteger(wagerNum) || wagerNum < 1 || wagerNum > 100) {
+      return setError('Wager must be between 1 and 100');
+    }
     setError('');
     setSubmitting(true);
     try {
-      await api.issueDare(targetUsername, description.trim());
+      await api.issueDare(targetUsername, description.trim(), wagerNum);
       setTargetUsername('');
       setTargetQuery('');
       setDescription('');
@@ -1050,14 +1055,14 @@ function DaresSection({ onSearchUsers }) {
   return (
     <section className="friend-section">
       <h2>Dares</h2>
-      <p className="fineprint">Dare someone to do something — whoever posts a photo of them doing it can mark it as fulfilling the dare, and you both get a bonus.</p>
+      <p className="fineprint">Dare someone to do something and stake a wager — whoever posts a photo fulfilling it wins your wagered points.</p>
 
       {pendingForMe.length > 0 && (
         <div className="dares-list">
           <h3 className="dares-sublabel">Dares waiting on you</h3>
           {pendingForMe.map((d) => (
             <div key={d.id} className="friend-row">
-              <span>{d.issuerUsername} dared you: "{d.description}"</span>
+              <span>{d.issuerUsername} dared you: "{d.description}" — 🎁 {d.wagerPoints} BP if you do it</span>
             </div>
           ))}
         </div>
@@ -1068,7 +1073,7 @@ function DaresSection({ onSearchUsers }) {
           <h3 className="dares-sublabel">Dares you've issued</h3>
           {issuedByMe.map((d) => (
             <div key={d.id} className="friend-row">
-              <span>{d.targetUsername}: "{d.description}" <span className="friend-status">{d.status}</span></span>
+              <span>{d.targetUsername}: "{d.description}" — 🎁 {d.wagerPoints} BP <span className="friend-status">{d.status}</span></span>
             </div>
           ))}
         </div>
@@ -1096,6 +1101,14 @@ function DaresSection({ onSearchUsers }) {
           placeholder="What's the dare?"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+        />
+        <input
+          type="number"
+          min="1"
+          max="100"
+          placeholder="Wager (1-100 BP)"
+          value={wager}
+          onChange={(e) => setWager(e.target.value)}
         />
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={submitting || !targetUsername || !description.trim()}>
@@ -1575,8 +1588,8 @@ export default function App() {
 
       <nav className="bottom-nav">
         <button className={`bottom-nav-btn ${tab === 'discover' ? 'active' : ''}`} onClick={() => setTab('discover')}>
-          <span className="bottom-nav-icon">🏠</span>
-          <span className="bottom-nav-label">Home</span>
+          <span className="bottom-nav-icon">🔴</span>
+          <span className="bottom-nav-label">BLF</span>
         </button>
         <button className={`bottom-nav-btn ${tab === 'groups' ? 'active' : ''}`} onClick={() => { setTab('groups'); setActiveGroupId(null); }}>
           <span className="bottom-nav-icon">👥</span>

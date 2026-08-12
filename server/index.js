@@ -25,10 +25,6 @@ const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const GROUP_MAX_MEMBERS = 30;
 const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const BCRYPT_COST = 12;
-// Fixed bonus paid to BOTH sides of a completed dare — kept fixed since
-// dares are mutual by nature, unlike the poster-chosen tag/crowd credit
-// below, both of which lean on MAX_CREDIT_PER_CONTRIBUTOR instead.
-const DARE_BONUS_POINTS = 2;
 // Lifetime cap on how many Beast Points any single contributor can pour into
 // one recipient, across every post they've ever credited them on — closes
 // the two-friends-mutually-inflate-each-other farming hole that a per-post
@@ -299,20 +295,26 @@ function writeLedgerEntry(recipientUserId, points, sourceType, sourcePostId, con
 }
 
 function computeUserStats(userId) {
-  // Points from photo-credited posts come from post_credits (many possible
-  // awarders per post), so pull each individual credit as its own point event.
+  // totalXp and periodTotals read from points_ledger, not post_credits — the
+  // ledger is the durable source (see its comment in db.js) and is the only
+  // one of the two that survives a post's 24h expiry cascade-delete. Using
+  // post_credits here was a bug: it meant totalXp/leaderboard silently
+  // dropped as old posts got cleaned up, and dare_wager payouts (ledger-only,
+  // no post_credits row) never counted toward a user's total at all.
+  const ledgerEntries = db.prepare(`SELECT points, earned_at FROM points_ledger WHERE user_id = ?`).all(userId);
+  const totalXp = ledgerEntries.reduce((sum, e) => sum + e.points, 0);
+  const levelInfo = levelForXp(totalXp);
+  const periodTotals = computePeriodTotals(ledgerEntries.map((e) => ({ points: e.points, earnedAt: e.earned_at })));
+
+  // Badges below are still post_credits-based (distinct posts credited on) —
+  // a separate, narrower concern from the totalXp bug above, left as-is.
   const postCredits = db.prepare(`
-    SELECT pc.points, pc.created_at, pc.post_id
+    SELECT pc.post_id
     FROM post_credits pc
     JOIN posts p ON p.id = pc.post_id
     WHERE p.subject_user_id = ?
   `).all(userId);
   const creditedPostIds = new Set(postCredits.map((c) => c.post_id));
-
-  const totalXp = postCredits.reduce((sum, c) => sum + c.points, 0);
-  const levelInfo = levelForXp(totalXp);
-
-  const periodTotals = computePeriodTotals(postCredits.map((c) => ({ points: c.points, earnedAt: c.created_at })));
 
   const creditsGivenCount = db.prepare(`
     SELECT COUNT(DISTINCT post_id) as n FROM post_credits WHERE awarder_user_id = ?
@@ -556,8 +558,8 @@ app.get('/api/me/memories', requireAuth, (req, res) => {
 });
 
 // --- Beast Dares ---
-// Basic mechanic only: no premade dare content/templates, no notifications
-// yet — just issue → fulfill via a post → both sides get a small bonus.
+// Issue → fulfill via a post → the wager the issuer staked pays out to the
+// target. No premade dare content/templates, no notifications yet.
 app.post('/api/dares', requireAuth, requireVerified, (req, res) => {
   const body = req.body || {};
   const target = getUserByUsername(body.targetUsername);
@@ -569,9 +571,22 @@ app.post('/api/dares', requireAuth, requireVerified, (req, res) => {
   if (!description) return res.status(400).json({ error: 'Say what the dare is.' });
   if (containsBlockedContent(description)) return res.status(400).json({ error: "That dare isn't allowed." });
 
-  const info = db.prepare('INSERT INTO dares (issuer_user_id, target_user_id, description) VALUES (?, ?, ?)')
-    .run(req.authUser.id, target.id, description);
-  res.status(201).json({ id: info.lastInsertRowid, status: 'pending' });
+  // The wager comes out of the same lifetime budget as crowd credit and the
+  // starter award — otherwise dares would be a backdoor around
+  // MAX_CREDIT_PER_CONTRIBUTOR for two people trading points back and forth.
+  const wager = parseInt(body.wager, 10);
+  const budget = creditBudgetFor(target.id, req.authUser.id, null);
+  if (budget <= 0) {
+    return res.status(400).json({ error: `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points` });
+  }
+  const maxWager = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
+  if (!Number.isInteger(wager) || wager < 1 || wager > maxWager) {
+    return res.status(400).json({ error: `Wager must be between 1 and ${maxWager}` });
+  }
+
+  const info = db.prepare('INSERT INTO dares (issuer_user_id, target_user_id, description, wager_points) VALUES (?, ?, ?, ?)')
+    .run(req.authUser.id, target.id, description, wager);
+  res.status(201).json({ id: info.lastInsertRowid, status: 'pending', wagerPoints: wager });
 });
 
 app.get('/api/me/dares', requireAuth, (req, res) => {
@@ -586,6 +601,7 @@ app.get('/api/me/dares', requireAuth, (req, res) => {
   res.json(rows.map((r) => ({
     id: r.id,
     description: r.description,
+    wagerPoints: r.wager_points,
     status: r.status,
     issuerUsername: r.issuer_username,
     targetUsername: r.target_username,
@@ -896,9 +912,14 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
   if (dare) {
     db.prepare(`UPDATE dares SET status = 'completed', completed_post_id = ?, completed_at = datetime('now') WHERE id = ?`)
       .run(info.lastInsertRowid, dare.id);
-    // Fixed bonus to both sides — see DARE_BONUS_POINTS comment.
-    writeLedgerEntry(dare.issuer_user_id, DARE_BONUS_POINTS, 'dare_bonus', info.lastInsertRowid, dare.target_user_id);
-    writeLedgerEntry(dare.target_user_id, DARE_BONUS_POINTS, 'dare_bonus', info.lastInsertRowid, dare.issuer_user_id);
+    // Pay the wager the issuer staked when they proposed the dare. Re-clamped
+    // against the issuer's current lifetime budget toward the target (rather
+    // than trusting the amount validated at issue time), in case other
+    // point-giving between them since then already ate into that budget.
+    const payout = Math.min(dare.wager_points, Math.max(0, creditBudgetFor(dare.target_user_id, dare.issuer_user_id, null)));
+    if (payout > 0) {
+      writeLedgerEntry(dare.target_user_id, payout, 'dare_wager', info.lastInsertRowid, dare.issuer_user_id);
+    }
   }
 
   res.status(201).json(serializePost(getPostRow(info.lastInsertRowid), creditedBy.id));
@@ -950,10 +971,14 @@ app.get('/api/users/:username/discover', (req, res) => {
     LIMIT 100
   `).all();
 
+  // BLF ranks by current point total (highest first), not just recency — the
+  // sort is stable, so equal-point posts still fall back to newest-first
+  // since that's the order they arrived in from the query above.
   const posts = rows
     .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id))
     .map((r) => serializePost(r, user.id))
-    .filter((p) => !p.expired);
+    .filter((p) => !p.expired)
+    .sort((a, b) => b.points - a.points);
   res.json(posts);
 });
 
