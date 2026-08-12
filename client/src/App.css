@@ -545,7 +545,7 @@
 
 .credit-modal input,
 .credit-modal select {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 400;
   color: var(--text);
   padding: 10px 12px;
@@ -972,7 +972,7 @@
 
 .custom-reaction-form input {
   width: 44px;
-  font-size: 14px;
+  font-size: 16px;
   padding: 4px 6px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.3);
@@ -1034,7 +1034,7 @@
 
 .comment-form input {
   flex: 1;
-  font-size: 13px;
+  font-size: 16px;
   padding: 8px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -1077,7 +1077,7 @@
 
 .give-credit-form input {
   width: 64px;
-  font-size: 13px;
+  font-size: 16px;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -1177,7 +1177,7 @@
 
 .friend-search-input {
   width: 100%;
-  font-size: 14px;
+  font-size: 16px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -1274,7 +1274,7 @@
 .report-form input {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 16px;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -1508,7 +1508,7 @@
 }
 
 .dare-form input {
-  font-size: 14px;
+  font-size: 16px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
