@@ -1518,6 +1518,7 @@ export default function App() {
       <PeriodTotals periodTotals={progress.periodTotals} />
 
       <main className="app-main">
+        <div key={tab === 'groups' ? `groups-${activeGroupId || 'list'}` : tab} className="app-main-content">
         {tab === 'discover' && (
           <DiscoverView
             discoverFeed={discoverFeed}
@@ -1580,6 +1581,7 @@ export default function App() {
         )}
         {tab === 'admin' && isAdmin && <AdminView reports={adminReports} onResolve={handleResolveReport} />}
         {tab === 'memories' && <MemoriesView memories={memories} onBack={() => setTab('settings')} />}
+        </div>
       </main>
 
       <footer className="app-footer">

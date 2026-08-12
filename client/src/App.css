@@ -179,6 +179,20 @@
   gap: 8px;
 }
 
+.app-main-content {
+  animation: tabContentIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tabContentIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes popoverIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 .app-title {
   font-size: 22px;
   font-weight: 700;
@@ -280,6 +294,11 @@
   color: var(--text-dim);
   flex: 1;
   max-width: 84px;
+  transition: color 0.2s ease, transform 0.15s ease;
+}
+
+.bottom-nav-btn:active {
+  transform: scale(0.9);
 }
 
 .bottom-nav-btn.active {
@@ -503,6 +522,17 @@
   align-items: flex-end;
   justify-content: center;
   z-index: 50;
+  animation: modalBackdropIn 0.2s ease;
+}
+
+@keyframes modalBackdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalCardIn {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (min-width: 640px) {
@@ -522,6 +552,7 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  animation: modalCardIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @media (min-width: 640px) {
@@ -745,6 +776,12 @@
   border-radius: 20px;
   overflow: hidden;
   box-shadow: var(--shadow);
+  animation: postCardIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes postCardIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .post-card-head {
@@ -829,6 +866,7 @@
   gap: 8px;
   z-index: 5;
   min-width: 220px;
+  animation: popoverIn 0.15s ease;
 }
 
 .post-card-caption {
@@ -1137,6 +1175,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  animation: popoverIn 0.15s ease;
 }
 
 .subject-result {
