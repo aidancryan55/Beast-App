@@ -1,8 +1,8 @@
 @font-face {
-  font-family: 'Stack Sans Headline';
-  src: url('/fonts/StackSansHeadline-VariableFont_wght.ttf') format('truetype-variations'),
-       url('/fonts/StackSansHeadline-VariableFont_wght.ttf') format('truetype');
-  font-weight: 200 700;
+  font-family: 'Miranda Sans';
+  src: url('/fonts/MirandaSans-VariableFont_wght.ttf') format('truetype-variations'),
+       url('/fonts/MirandaSans-VariableFont_wght.ttf') format('truetype');
+  font-weight: 300 700;
   font-style: normal;
   font-display: swap;
 }
@@ -22,7 +22,7 @@
   --success: #34c759;
   --shadow: 0 10px 25px -8px rgba(0, 0, 0, 0.08);
 
-  font: 16px/140% 'Stack Sans Headline', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  font: 16px/140% 'Miranda Sans', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
   color-scheme: light;
   color: var(--text);
   background: var(--bg);
