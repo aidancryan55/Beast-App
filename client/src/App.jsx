@@ -863,7 +863,9 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
   return (
     <div className="post-card">
       <div className="post-card-head">
-        <div className={`post-avatar ${post.isAnonymous ? 'anon' : ''}`}>{posterInitial}</div>
+        <div className={`post-avatar ${post.isAnonymous ? 'anon' : ''}`}>
+          {post.creditedByAvatarUrl ? <img src={post.creditedByAvatarUrl} alt="" /> : posterInitial}
+        </div>
         <div className="post-head-text">
           <div className="post-head-line">
             <strong className={post.isAnonymous ? 'anon-name' : ''}>{posterName}</strong>
@@ -1193,7 +1195,14 @@ function LeaderboardView({ leaderboard, currentUsername }) {
           {leaderboard.map((row, i) => (
             <tr key={row.username} className={row.username.toLowerCase() === currentUsername.toLowerCase() ? 'me' : ''}>
               <td>{i + 1}</td>
-              <td>{row.username}</td>
+              <td>
+                <span className="leaderboard-player">
+                  <span className="leaderboard-avatar">
+                    {row.avatarUrl ? <img src={row.avatarUrl} alt="" /> : row.username.charAt(0).toUpperCase()}
+                  </span>
+                  {row.username}
+                </span>
+              </td>
               <td>{row.title} <span className="lvl-num">(Lv {row.level})</span></td>
               <td>{row.totalXp}</td>
               <td>{row.creditedPostCount}</td>
@@ -1328,7 +1337,125 @@ function DaresSection({ onSearchUsers }) {
   );
 }
 
-function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, onDeleteAccount }) {
+function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
+  const [realName, setRealName] = useState('');
+  const [savedName, setSavedName] = useState('');
+  const [nameStatus, setNameStatus] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordStatus, setPasswordStatus] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    api.getMe().then((me) => {
+      setRealName(me.realName || '');
+      setSavedName(me.realName || '');
+    }).catch(() => {});
+  }, []);
+
+  async function handleAvatarFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarError('');
+    setUploading(true);
+    try {
+      const { avatarUrl: newUrl } = await api.uploadAvatar(file);
+      onAvatarUpdated(newUrl);
+    } catch (err) {
+      setAvatarError(err.message);
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  async function submitName(e) {
+    e.preventDefault();
+    setNameError('');
+    setNameStatus('');
+    try {
+      await api.updateProfile(realName.trim());
+      setSavedName(realName.trim());
+      setNameStatus('Saved ✓');
+    } catch (err) {
+      setNameError(err.message);
+    }
+  }
+
+  async function submitPassword(e) {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordStatus('');
+    setChangingPassword(true);
+    try {
+      await api.changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setPasswordStatus('Password updated ✓');
+    } catch (err) {
+      setPasswordError(err.message);
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  return (
+    <section className="friend-section">
+      <h2>Edit Profile</h2>
+
+      <div className="avatar-edit-row">
+        <button type="button" className="avatar-edit-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+          {avatarUrl ? <img src={avatarUrl} alt="" /> : <span className="avatar-edit-placeholder">📷</span>}
+        </button>
+        <div>
+          <button type="button" className="link-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            {uploading ? 'Uploading…' : 'Change profile picture'}
+          </button>
+          {avatarError && <p className="error">{avatarError}</p>}
+        </div>
+        <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleAvatarFile} />
+      </div>
+
+      <form onSubmit={submitName} className="inline-edit-form">
+        <label>
+          <span>Name <span className="fineprint">(private — not shown to other users)</span></span>
+          <input
+            type="text"
+            maxLength={60}
+            value={realName}
+            onChange={(e) => { setRealName(e.target.value); setNameStatus(''); }}
+          />
+        </label>
+        {nameError && <p className="error">{nameError}</p>}
+        <button type="submit" disabled={!realName.trim() || realName.trim() === savedName}>
+          {nameStatus || 'Save name'}
+        </button>
+      </form>
+
+      <form onSubmit={submitPassword} className="inline-edit-form">
+        <label>
+          Current password
+          <input type="password" value={currentPassword} onChange={(e) => { setCurrentPassword(e.target.value); setPasswordStatus(''); }} />
+        </label>
+        <label>
+          New password
+          <input type="password" placeholder="Min 8 characters" value={newPassword} onChange={(e) => { setNewPassword(e.target.value); setPasswordStatus(''); }} />
+        </label>
+        {passwordError && <p className="error">{passwordError}</p>}
+        <button type="submit" disabled={changingPassword || !currentPassword || newPassword.length < 8}>
+          {changingPassword ? 'Updating…' : (passwordStatus || 'Change password')}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, onDeleteAccount, avatarUrl, onAvatarUpdated }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
@@ -1348,6 +1475,8 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
 
   return (
     <div className="settings-view">
+      <EditProfileSection avatarUrl={avatarUrl} onAvatarUpdated={onAvatarUpdated} />
+
       <section className="friend-section">
         <h2>Beast Streak</h2>
         <div className="streak-summary">
@@ -1483,7 +1612,7 @@ export default function App() {
   async function handleLogin(email, password) {
     const result = await api.login(email, password);
     api.setToken(result.token);
-    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin };
+    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin, avatarUrl: result.avatarUrl || null };
     localStorage.setItem('ccq_auth', JSON.stringify(authData));
     setAuth(authData);
   }
@@ -1503,9 +1632,18 @@ export default function App() {
   async function handleSignupFinish(email, password) {
     const result = await api.signupFinish(email, password);
     api.setToken(result.token);
-    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin };
+    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin, avatarUrl: result.avatarUrl || null };
     localStorage.setItem('ccq_auth', JSON.stringify(authData));
     setAuth(authData);
+  }
+
+  function handleAvatarUpdated(avatarUrl) {
+    setAuth((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, avatarUrl };
+      localStorage.setItem('ccq_auth', JSON.stringify(next));
+      return next;
+    });
   }
 
   async function logout() {
@@ -1809,6 +1947,8 @@ export default function App() {
             blockedUsers={blockedUsers}
             onUnblock={handleUnblockUser}
             onDeleteAccount={handleDeleteAccount}
+            avatarUrl={auth.avatarUrl}
+            onAvatarUpdated={handleAvatarUpdated}
           />
         )}
         {tab === 'admin' && isAdmin && <AdminView reports={adminReports} onResolve={handleResolveReport} />}

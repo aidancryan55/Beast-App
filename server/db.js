@@ -11,6 +11,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL COLLATE NOCASE,
     real_name TEXT,
+    avatar_url TEXT,
     password_hash TEXT,
     email TEXT UNIQUE COLLATE NOCASE,
     email_verified INTEGER NOT NULL DEFAULT 0,
@@ -191,6 +192,9 @@ db.exec(`
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
 if (!userCols.includes('real_name')) {
   db.exec('ALTER TABLE users ADD COLUMN real_name TEXT');
+}
+if (!userCols.includes('avatar_url')) {
+  db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
 }
 if (!userCols.includes('password_hash')) {
   db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');

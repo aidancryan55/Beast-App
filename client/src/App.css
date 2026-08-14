@@ -504,6 +504,33 @@
   font-weight: 700;
 }
 
+.leaderboard-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leaderboard-avatar {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.leaderboard-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .lvl-num {
   color: var(--text-dim);
   font-weight: 400;
@@ -545,6 +572,70 @@
   text-transform: uppercase;
   letter-spacing: 0.3px;
   margin-top: 2px;
+}
+
+/* ---------- Edit profile (avatar, name, password) ---------- */
+.avatar-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.avatar-edit-btn {
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+}
+
+.avatar-edit-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-edit-placeholder {
+  font-size: 22px;
+  opacity: 0.6;
+}
+
+.inline-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.inline-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.inline-edit-form input {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.inline-edit-form button[type='submit'] {
+  align-self: flex-start;
 }
 
 /* ---------- Row list styles (used by Groups) ---------- */
@@ -922,6 +1013,13 @@
   justify-content: center;
   font-weight: 800;
   font-size: 14px;
+  overflow: hidden;
+}
+
+.post-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .post-avatar.anon {

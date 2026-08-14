@@ -44,6 +44,15 @@ export const api = {
   login: (email, password) => req('/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   logout: () => req('/logout', { method: 'POST' }),
 
+  getMe: () => req('/me'),
+  updateProfile: (realName) => req('/me/profile', { method: 'PATCH', body: JSON.stringify({ realName }) }),
+  changePassword: (currentPassword, newPassword) => req('/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
+  uploadAvatar: (file) => {
+    const form = new FormData();
+    form.append('avatar', file, file.name || 'avatar.jpg');
+    return reqForm('/me/avatar', form);
+  },
+
   createActivity: (name) => req('/activities', { method: 'POST', body: JSON.stringify({ name }) }),
   getProgress: (displayName) => req(`/users/${encodeURIComponent(displayName)}/progress`),
   getStreak: () => req('/me/streak'),

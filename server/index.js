@@ -188,6 +188,14 @@ function r2KeyFromUrl(photoUrl) {
   return photoUrl ? photoUrl.slice(photoUrl.lastIndexOf('/') + 1) : null;
 }
 
+// Shared cleanup for any stored photo URL (avatar or post photo) — routes
+// to local-disk unlink or R2 delete depending on which one produced it.
+function deleteStoredPhoto(url) {
+  if (!url) return;
+  if (url.startsWith('/uploads/')) fs.unlink(path.join(uploadsDir, url.slice('/uploads/'.length)), () => {});
+  else deletePhotoFromR2(r2KeyFromUrl(url));
+}
+
 function levelForXp(xp) {
   let current = LEVELS[0];
   for (const lvl of LEVELS) {
@@ -488,7 +496,7 @@ app.post('/api/signup/finish', authLimiter, async (req, res) => {
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
 
   const token = createSession(user.id);
-  res.status(201).json({ displayName: user.username, token, isAdmin: !!user.is_admin });
+  res.status(201).json({ displayName: user.username, token, isAdmin: !!user.is_admin, avatarUrl: user.avatar_url || null });
 });
 
 app.post('/api/login', authLimiter, async (req, res) => {
@@ -502,12 +510,54 @@ app.post('/api/login', authLimiter, async (req, res) => {
     return res.status(403).json({ error: 'Please verify your email first — check your inbox for the confirmation link.', code: 'unverified' });
   }
   const token = createSession(user.id);
-  res.json({ displayName: user.username, token, isAdmin: !!user.is_admin });
+  res.json({ displayName: user.username, token, isAdmin: !!user.is_admin, avatarUrl: user.avatar_url || null });
 });
 
 app.post('/api/logout', requireAuth, (req, res) => {
   db.prepare('DELETE FROM sessions WHERE token = ?').run(req.authToken);
   res.json({ status: 'logged out' });
+});
+
+app.get('/api/me', requireAuth, (req, res) => {
+  const user = req.authUser;
+  res.json({ username: user.username, realName: user.real_name || '', email: user.email, avatarUrl: user.avatar_url || null });
+});
+
+app.patch('/api/me/profile', requireAuth, (req, res) => {
+  const realName = ((req.body || {}).realName || '').trim().slice(0, 60);
+  if (!realName) return res.status(400).json({ error: 'Enter your name.' });
+  db.prepare('UPDATE users SET real_name = ? WHERE id = ?').run(realName, req.authUser.id);
+  res.json({ realName });
+});
+
+app.post('/api/me/password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  const ok = await verifyPassword(currentPassword || '', req.authUser.password_hash);
+  if (!ok) return res.status(401).json({ error: 'Current password is wrong.' });
+  if (!newPassword || newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  const passwordHash = await hashPassword(newPassword);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, req.authUser.id);
+  res.json({ status: 'updated' });
+});
+
+app.post('/api/me/avatar', requireAuth, upload.single('avatar'), async (req, res) => {
+  const user = req.authUser;
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: 'A photo is required' });
+
+  const oldAvatarUrl = user.avatar_url;
+  const avatarUrl = await uploadPhotoToR2(file.path, file.filename);
+  const finalUrl = avatarUrl || `/uploads/${file.filename}`;
+  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(finalUrl, user.id);
+
+  // Only the local copy needs cleanup when R2 took the upload — if R2 isn't
+  // configured, finalUrl points at this same local file, so keep it.
+  if (avatarUrl) fs.unlink(file.path, () => {});
+  deleteStoredPhoto(oldAvatarUrl);
+
+  res.json({ avatarUrl: finalUrl });
 });
 
 // Apple 5.1.1(v): account creation requires in-app account deletion.
@@ -526,6 +576,8 @@ app.delete('/api/account', requireAuth, async (req, res) => {
   `).all(user.id, user.id);
 
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, comments, reports, blocks, group_members
+
+  deleteStoredPhoto(user.avatar_url);
 
   for (const photo of photos) {
     fs.unlink(path.join(uploadsDir, photo.photo_filename), () => {});
@@ -577,7 +629,7 @@ app.post('/api/activities', requireAuth, requireVerified, (req, res) => {
 app.get('/api/users/:username/progress', (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json(computeUserStats(user.id));
+  res.json({ ...computeUserStats(user.id), avatarUrl: user.avatar_url || null });
 });
 
 // --- Beast Streak ---
@@ -666,12 +718,13 @@ app.get('/api/me/dares', requireAuth, (req, res) => {
 app.get('/api/leaderboard', (req, res) => {
   // Exclude signups that were started but never finished (no password set
   // yet) — they're not real, usable accounts, just claimed usernames.
-  const users = db.prepare('SELECT id, username FROM users WHERE password_hash IS NOT NULL').all();
+  const users = db.prepare('SELECT id, username, avatar_url FROM users WHERE password_hash IS NOT NULL').all();
   const board = users
     .map((u) => {
       const stats = computeUserStats(u.id);
       return {
         username: u.username,
+        avatarUrl: u.avatar_url || null,
         totalXp: stats.totalXp,
         level: stats.levelInfo.level,
         title: stats.levelInfo.title,
@@ -790,6 +843,7 @@ app.post('/api/groups/:groupId/leave', requireAuth, (req, res) => {
 // --- Posts (photo-credited Beast Points) ---
 const POST_JOIN_SQL = `
   SELECT p.*, su.username as subject_username, cu.username as credited_by_username,
+         cu.avatar_url as credited_by_avatar_url,
          a.key as activity_key, a.name as activity_name, a.icon as activity_icon,
          g.name as group_name
   FROM posts p
@@ -854,6 +908,7 @@ function serializePost(row, viewerUserId) {
     subjectUsername: row.subject_username,
     subjectDisplayName: row.subject_display_name || null,
     creditedByUsername: isAnonymous ? 'Anonymous' : row.credited_by_username,
+    creditedByAvatarUrl: isAnonymous ? null : (row.credited_by_avatar_url || null),
     isAnonymous,
     activityKey: row.activity_key || null,
     activityName: row.activity_name || null,
