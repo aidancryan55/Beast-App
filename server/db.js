@@ -279,7 +279,7 @@ if (postCols.length) {
   if (!postCols.includes('photo_url')) {
     db.exec('ALTER TABLE posts ADD COLUMN photo_url TEXT');
   }
-  // Second photo for BeReal-style dual-camera posts — the small corner shot
+  // Second photo for dual-camera posts — the small corner shot
   // that viewers can tap to swap with the main one. Null for single-photo posts.
   if (!postCols.includes('inset_photo_filename')) {
     db.exec('ALTER TABLE posts ADD COLUMN inset_photo_filename TEXT');

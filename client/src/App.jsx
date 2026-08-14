@@ -703,7 +703,7 @@ function CommentsSection({ post, onComment }) {
 
 function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [swapped, setSwapped] = useState(false); // BeReal-style tap-to-swap, purely local to this viewer
+  const [swapped, setSwapped] = useState(false); // tap-to-swap which shot is on top, purely local to this viewer
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
   const isPoster = post.creditedByUsername.toLowerCase() === currentUsername.toLowerCase();
   const hoursLeft = post.saved ? null : Math.max(0, Math.ceil((Date.parse(post.expiresAt) - Date.now()) / 3600000));

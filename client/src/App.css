@@ -688,7 +688,7 @@
   text-decoration: underline;
 }
 
-/* ---------- Dual capture (BeReal-style) ---------- */
+/* ---------- Dual capture (front + back camera, one composed shot) ---------- */
 .dual-capture {
   display: flex;
   flex-direction: column;
