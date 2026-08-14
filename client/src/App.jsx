@@ -314,6 +314,24 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const selectedGroup = myGroups.find((g) => g.id === Number(groupId));
   const groupMembers = (selectedGroup?.members || []).filter((m) => m.toLowerCase() !== currentUsername.toLowerCase());
 
+  async function pickRandomBeast() {
+    if (destination === 'group') {
+      if (!groupMembers.length) return;
+      const pick = groupMembers[Math.floor(Math.random() * groupMembers.length)];
+      setSubjectUsername(pick);
+      return;
+    }
+    setError('');
+    try {
+      const { username } = await api.getRandomBeast();
+      setSubjectUsername(username);
+      setSubjectQuery('');
+      setSubjectResults([]);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function runSubjectSearch(q) {
     setSubjectQuery(q);
     setSubjectUsername('');
@@ -429,21 +447,27 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
             )}
             <label>
               Who's the beast?
-              <select value={subjectUsername} onChange={(e) => setSubjectUsername(e.target.value)}>
-                <option value="">Pick a member</option>
-                {groupMembers.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+              <div className="subject-row">
+                <select value={subjectUsername} onChange={(e) => setSubjectUsername(e.target.value)}>
+                  <option value="">Pick a member</option>
+                  {groupMembers.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <button type="button" className="random-beast-btn" onClick={pickRandomBeast} disabled={!groupMembers.length}>🎲 Random</button>
+              </div>
             </label>
           </>
         ) : (
           <label>
             Who's the beast?
-            <input
-              type="text"
-              placeholder="Search any nickname"
-              value={subjectUsername || subjectQuery}
-              onChange={(e) => runSubjectSearch(e.target.value)}
-            />
+            <div className="subject-row">
+              <input
+                type="text"
+                placeholder="Search any nickname"
+                value={subjectUsername || subjectQuery}
+                onChange={(e) => runSubjectSearch(e.target.value)}
+              />
+              <button type="button" className="random-beast-btn" onClick={pickRandomBeast}>🎲 Random</button>
+            </div>
             {subjectResults.length > 0 && !subjectUsername && (
               <div className="subject-results">
                 {subjectResults.map((name) => (
