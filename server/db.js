@@ -10,6 +10,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    real_name TEXT,
     password_hash TEXT,
     email TEXT UNIQUE COLLATE NOCASE,
     email_verified INTEGER NOT NULL DEFAULT 0,
@@ -188,6 +189,9 @@ db.exec(`
 
 // --- Migrations for databases created before `password_hash` / email auth existed ---
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userCols.includes('real_name')) {
+  db.exec('ALTER TABLE users ADD COLUMN real_name TEXT');
+}
 if (!userCols.includes('password_hash')) {
   db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
 }

@@ -36,8 +36,11 @@ async function reqForm(path, formData) {
 
 export const api = {
   setToken,
-  signup: (email, password, displayName) =>
-    req('/signup', { method: 'POST', body: JSON.stringify({ email, password, displayName }) }),
+  signupStart: (realName, username, email) =>
+    req('/signup/start', { method: 'POST', body: JSON.stringify({ realName, username, email }) }),
+  signupResendCode: (email) => req('/signup/resend-code', { method: 'POST', body: JSON.stringify({ email }) }),
+  signupVerifyCode: (email, code) => req('/signup/verify-code', { method: 'POST', body: JSON.stringify({ email, code }) }),
+  signupFinish: (email, password) => req('/signup/finish', { method: 'POST', body: JSON.stringify({ email, password }) }),
   login: (email, password) => req('/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   logout: () => req('/logout', { method: 'POST' }),
 

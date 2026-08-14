@@ -2,16 +2,23 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import './App.css';
 
-function LoginScreen({ onLogin, onSignup }) {
-  // 'landing' | 'signup-name' | 'signup-email' | 'signup-password' | 'login'
+function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerifyCode, onSignupFinish }) {
+  // 'landing' | 'signup-realname' | 'signup-username' | 'signup-email' | 'signup-code' | 'signup-password' | 'login'
   const [screen, setScreen] = useState('landing');
+  const [realName, setRealName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
   const [errorCode, setErrorCode] = useState('');
   const [loading, setLoading] = useState(false);
-  const [checkEmail, setCheckEmail] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => setResendCooldown((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   async function submitLogin(e) {
     e.preventDefault();
@@ -28,13 +35,14 @@ function LoginScreen({ onLogin, onSignup }) {
     }
   }
 
-  async function finishSignup(e) {
+  async function submitEmail(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      await onSignup(email.trim(), password, displayName.trim());
-      setCheckEmail(email.trim());
+      await onSignupStart(realName.trim(), username.trim(), email.trim());
+      setResendCooldown(60);
+      setScreen('signup-code');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -42,35 +50,84 @@ function LoginScreen({ onLogin, onSignup }) {
     }
   }
 
-  if (checkEmail) {
-    return (
-      <div className="login-screen">
-        <div className="login-card">
-          <h1>Check your email</h1>
-          <p className="tagline">We sent a confirmation link to <strong>{checkEmail}</strong>. Tap it to verify your account, then come back and log in.</p>
-          <button type="button" onClick={() => { setCheckEmail(''); setScreen('login'); }}>Back to log in</button>
-        </div>
-      </div>
-    );
+  async function resendCode() {
+    if (resendCooldown > 0) return;
+    setError('');
+    try {
+      await onSignupResendCode(email.trim());
+      setResendCooldown(60);
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
-  if (screen === 'signup-name') {
+  async function submitCode(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await onSignupVerifyCode(email.trim(), code.trim());
+      setScreen('signup-password');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function finishSignup(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await onSignupFinish(email.trim(), password);
+      // Success logs you straight in — the parent swaps this screen out.
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (screen === 'signup-realname') {
     return (
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => setScreen('landing')} aria-label="Back">‹</button>
-        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (displayName.trim()) setScreen('signup-email'); }}>
+        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (realName.trim()) setScreen('signup-username'); }}>
           <p className="onboard-wordmark">THE BEAST GAME</p>
-          <h1 className="onboard-question">Let's get started — what should we call you?</h1>
+          <h1 className="onboard-question">Let's get started — what's your name?</h1>
           <input
             className="onboard-input"
             autoFocus
             placeholder="Your name"
-            value={displayName}
+            value={realName}
+            maxLength={60}
+            onChange={(e) => setRealName(e.target.value)}
+          />
+          <p className="onboard-hint">Just for us — this isn't shown to anyone else.</p>
+          <button type="submit" className="onboard-continue" disabled={!realName.trim()}>Continue</button>
+        </form>
+      </div>
+    );
+  }
+
+  if (screen === 'signup-username') {
+    return (
+      <div className="onboard-screen">
+        <button type="button" className="onboard-back" onClick={() => setScreen('signup-realname')} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (username.trim()) setScreen('signup-email'); }}>
+          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <h1 className="onboard-question">Next, create your username</h1>
+          <input
+            className="onboard-input"
+            autoFocus
+            placeholder="Username"
+            value={username}
             maxLength={30}
-            onChange={(e) => setDisplayName(e.target.value)}
+            onChange={(e) => setUsername(e.target.value)}
           />
           <p className="onboard-hint">Shown publicly on the leaderboard and on posts — you can't change this later, so pick something you'll want to keep.</p>
-          <button type="submit" className="onboard-continue" disabled={!displayName.trim()}>Continue</button>
+          <button type="submit" className="onboard-continue" disabled={!username.trim()}>Continue</button>
         </form>
       </div>
     );
@@ -79,8 +136,8 @@ function LoginScreen({ onLogin, onSignup }) {
   if (screen === 'signup-email') {
     return (
       <div className="onboard-screen">
-        <button type="button" className="onboard-back" onClick={() => setScreen('signup-name')} aria-label="Back">‹</button>
-        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (email.trim().length > 2) setScreen('signup-password'); }}>
+        <button type="button" className="onboard-back" onClick={() => setScreen('signup-username')} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={submitEmail}>
           <p className="onboard-wordmark">THE BEAST GAME</p>
           <h1 className="onboard-question">What's your email?</h1>
           <input
@@ -92,7 +149,41 @@ function LoginScreen({ onLogin, onSignup }) {
             onChange={(e) => setEmail(e.target.value)}
           />
           <p className="onboard-hint">Stays private — only used to sign in and recover your account.</p>
-          <button type="submit" className="onboard-continue" disabled={email.trim().length <= 2}>Continue</button>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" className="onboard-continue" disabled={loading || email.trim().length <= 2}>
+            {loading ? 'Sending…' : 'Continue'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  if (screen === 'signup-code') {
+    return (
+      <div className="onboard-screen">
+        <button type="button" className="onboard-back" onClick={() => { setError(''); setScreen('signup-email'); }} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={submitCode}>
+          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <h1 className="onboard-question">Enter the code we sent to<br />{email}</h1>
+          <input
+            className="onboard-input"
+            autoFocus
+            inputMode="numeric"
+            maxLength={6}
+            placeholder="000000"
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+          />
+          <button type="button" className="link-btn" onClick={() => { setError(''); setScreen('signup-email'); }}>
+            Change the email
+          </button>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" className="onboard-continue" disabled={loading || code.trim().length < 6}>
+            {loading ? 'Verifying…' : 'Continue'}
+          </button>
+          <button type="button" className="onboard-resend" onClick={resendCode} disabled={resendCooldown > 0}>
+            {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+          </button>
         </form>
       </div>
     );
@@ -101,7 +192,6 @@ function LoginScreen({ onLogin, onSignup }) {
   if (screen === 'signup-password') {
     return (
       <div className="onboard-screen">
-        <button type="button" className="onboard-back" onClick={() => setScreen('signup-email')} aria-label="Back">‹</button>
         <form className="onboard-body" onSubmit={finishSignup}>
           <p className="onboard-wordmark">THE BEAST GAME</p>
           <h1 className="onboard-question">Create a password</h1>
@@ -171,7 +261,7 @@ function LoginScreen({ onLogin, onSignup }) {
       </div>
       <div className="login-card">
         <div className="auth-toggle">
-          <button type="button" onClick={() => { setError(''); setScreen('signup-name'); }}>Create Account</button>
+          <button type="button" onClick={() => { setError(''); setScreen('signup-realname'); }}>Create Account</button>
           <button type="button" className="secondary" onClick={() => { setError(''); setScreen('login'); }}>Log In</button>
         </div>
         <p className="fineprint">Your display name is shown publicly on the leaderboard and on posts anyone can see in Discover — your email stays private and is only used to sign in.</p>
@@ -1418,9 +1508,24 @@ export default function App() {
     setAuth(authData);
   }
 
-  async function handleSignup(email, password, name) {
-    await api.signup(email, password, name);
-    // Unverified — no session yet. LoginScreen shows a "check your email" state.
+  async function handleSignupStart(realName, username, email) {
+    return api.signupStart(realName, username, email);
+  }
+
+  async function handleSignupResendCode(email) {
+    return api.signupResendCode(email);
+  }
+
+  async function handleSignupVerifyCode(email, code) {
+    return api.signupVerifyCode(email, code);
+  }
+
+  async function handleSignupFinish(email, password) {
+    const result = await api.signupFinish(email, password);
+    api.setToken(result.token);
+    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin };
+    localStorage.setItem('ccq_auth', JSON.stringify(authData));
+    setAuth(authData);
   }
 
   async function logout() {
@@ -1625,7 +1730,15 @@ export default function App() {
   }, [tab]);
 
   if (!displayName) {
-    return <LoginScreen onLogin={handleLogin} onSignup={handleSignup} />;
+    return (
+      <LoginScreen
+        onLogin={handleLogin}
+        onSignupStart={handleSignupStart}
+        onSignupResendCode={handleSignupResendCode}
+        onSignupVerifyCode={handleSignupVerifyCode}
+        onSignupFinish={handleSignupFinish}
+      />
+    );
   }
 
   if (!progress) {

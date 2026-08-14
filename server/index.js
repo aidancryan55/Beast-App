@@ -23,7 +23,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const DISPLAY_NAME_RE = /^[\w .'-]{1,30}$/;
 const POST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const GROUP_MAX_MEMBERS = 30;
-const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const EMAIL_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const BCRYPT_COST = 12;
 // Lifetime cap on how many Beast Points any single contributor can pour into
 // one recipient, across every post they've ever credited them on — closes
@@ -95,23 +95,24 @@ function containsBlockedContent(text) {
   return typeof text === 'string' && CAPTION_BLOCKLIST.some((re) => re.test(text));
 }
 
-// --- Email verification tokens + Resend ---
-function generateVerifyToken() {
-  const token = crypto.randomBytes(32).toString('hex');
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const expires = new Date(Date.now() + VERIFY_TOKEN_EXPIRY_MS).toISOString();
-  return { token, tokenHash, expires };
+// --- Email verification codes + Resend ---
+// Code-based (not link-based) so verification happens inline in the signup
+// wizard — the user never has to leave the app to tap a link.
+function generateEmailCode() {
+  const code = String(crypto.randomInt(100000, 1000000)); // 6 digits
+  const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+  const expires = new Date(Date.now() + EMAIL_CODE_EXPIRY_MS).toISOString();
+  return { code, codeHash, expires };
 }
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM || 'The Beast Game <onboarding@resend.dev>';
 const APP_URL = process.env.APP_URL || `http://localhost:${process.env.PORT || 4001}`;
 
-async function sendVerificationEmail(email, token) {
-  const verifyUrl = `${APP_URL}/api/verify?token=${token}`;
+async function sendVerificationCode(email, code) {
   if (!RESEND_API_KEY) {
-    // Dev fallback: no Resend key configured, so log the link instead of emailing it.
-    console.log(`[dev] Verification link for ${email}:\n${verifyUrl}`);
+    // Dev fallback: no Resend key configured, so log the code instead of emailing it.
+    console.log(`[dev] Verification code for ${email}: ${code}`);
     return;
   }
   const res = await fetch('https://api.resend.com/emails', {
@@ -120,10 +121,10 @@ async function sendVerificationEmail(email, token) {
     body: JSON.stringify({
       from: RESEND_FROM,
       to: email,
-      subject: 'Confirm your email for The Beast Game',
-      html: `<p>Tap the link below to confirm your email and finish signing up for The Beast Game:</p>
-             <p><a href="${verifyUrl}">${verifyUrl}</a></p>
-             <p>This link expires in 24 hours.</p>`,
+      subject: 'Your Beast Game verification code',
+      html: `<p>Your verification code is:</p>
+             <p style="font-size: 28px; font-weight: 700; letter-spacing: 4px;">${code}</p>
+             <p>This code expires in 10 minutes.</p>`,
     }),
   });
   if (!res.ok) {
@@ -383,61 +384,111 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts — try again in a bit.' },
 });
 
-app.post('/api/signup', authLimiter, async (req, res) => {
-  const { email, password, displayName } = req.body || {};
+// Signup is a 4-step wizard (real name -> username -> email -> verify code
+// -> password), matching the client's onboarding screens one for one. Each
+// step below is its own request rather than one big /api/signup call.
+// The user row is created at the "start" step with no password_hash yet
+// (that column allows NULL) and only becomes a real, usable account once
+// "finish" sets the password. That's what a NULL password_hash means
+// everywhere else in this file: a signup that was started but never
+// completed — safe to overwrite on retry, never valid to log into.
+app.post('/api/signup/start', authLimiter, async (req, res) => {
+  const body = req.body || {};
+  const realName = (body.realName || '').trim().slice(0, 60);
+  const username = (body.username || '').trim();
+  const email = (body.email || '').trim().toLowerCase();
+
+  if (!realName) return res.status(400).json({ error: 'Enter your name.' });
+  if (!username || !DISPLAY_NAME_RE.test(username)) {
+    return res.status(400).json({ error: 'Username must be 1-30 characters (letters, numbers, spaces, . \' -).' });
+  }
   if (!email || !EMAIL_RE.test(email)) {
     return res.status(400).json({ error: 'Enter a valid email address.' });
   }
+
+  const existingByEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (existingByEmail && existingByEmail.password_hash) {
+    return res.status(409).json({ error: 'That email is already registered. Try logging in.' });
+  }
+  const existingByUsername = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  if (existingByUsername && (!existingByEmail || existingByUsername.id !== existingByEmail.id)) {
+    return res.status(409).json({ error: 'That username is taken.' });
+  }
+
+  const { code, codeHash, expires } = generateEmailCode();
+  const isAdmin = process.env.ADMIN_EMAIL && email === process.env.ADMIN_EMAIL.toLowerCase() ? 1 : 0;
+
+  if (existingByEmail) {
+    // Re-starting an incomplete signup (e.g. they backed out and changed
+    // something) — reuse the same row rather than erroring.
+    db.prepare(`
+      UPDATE users SET username = ?, real_name = ?, verify_token_hash = ?, verify_token_expires = ?, email_verified = 0
+      WHERE id = ?
+    `).run(username, realName, codeHash, expires, existingByEmail.id);
+  } else {
+    db.prepare(`
+      INSERT INTO users (username, real_name, email, verify_token_hash, verify_token_expires, is_admin)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(username, realName, email, codeHash, expires, isAdmin);
+  }
+
+  try {
+    await sendVerificationCode(email, code);
+  } catch (err) {
+    console.error('sendVerificationCode failed:', err);
+  }
+
+  res.status(201).json({ status: 'code_sent', email });
+});
+
+app.post('/api/signup/resend-code', authLimiter, async (req, res) => {
+  const email = ((req.body || {}).email || '').trim().toLowerCase();
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user || user.password_hash) return res.status(404).json({ error: 'Start signup again.' });
+
+  const { code, codeHash, expires } = generateEmailCode();
+  db.prepare('UPDATE users SET verify_token_hash = ?, verify_token_expires = ? WHERE id = ?').run(codeHash, expires, user.id);
+  try {
+    await sendVerificationCode(email, code);
+  } catch (err) {
+    console.error('sendVerificationCode failed:', err);
+  }
+  res.json({ status: 'code_sent' });
+});
+
+app.post('/api/signup/verify-code', authLimiter, (req, res) => {
+  const body = req.body || {};
+  const email = (body.email || '').trim().toLowerCase();
+  const code = (body.code || '').trim();
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user || user.password_hash) return res.status(404).json({ error: 'Start signup again.' });
+  if (!user.verify_token_hash) return res.status(400).json({ error: 'Request a new code.' });
+  if (!user.verify_token_expires || new Date(user.verify_token_expires) < new Date()) {
+    return res.status(400).json({ error: 'That code expired — request a new one.' });
+  }
+  const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+  if (codeHash !== user.verify_token_hash) return res.status(400).json({ error: 'Incorrect code.' });
+
+  db.prepare('UPDATE users SET email_verified = 1, verify_token_hash = NULL, verify_token_expires = NULL WHERE id = ?').run(user.id);
+  res.json({ status: 'verified' });
+});
+
+app.post('/api/signup/finish', authLimiter, async (req, res) => {
+  const body = req.body || {};
+  const email = (body.email || '').trim().toLowerCase();
+  const password = body.password || '';
   if (!password || password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   }
-  const name = (displayName || '').trim();
-  if (!name || !DISPLAY_NAME_RE.test(name)) {
-    return res.status(400).json({ error: 'Display name must be 1-30 characters (letters, numbers, spaces, . \' -).' });
-  }
-
-  const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
-  if (existingEmail) return res.status(409).json({ error: 'That email is already registered.' });
-  const existingName = db.prepare('SELECT id FROM users WHERE username = ?').get(name);
-  if (existingName) return res.status(409).json({ error: 'That display name is taken.' });
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user || user.password_hash) return res.status(404).json({ error: 'Start signup again.' });
+  if (!user.email_verified) return res.status(400).json({ error: 'Verify your email first.' });
 
   const passwordHash = await hashPassword(password);
-  const { token, tokenHash, expires } = generateVerifyToken();
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
 
-  const isAdmin = process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase() ? 1 : 0;
-  db.prepare(`
-    INSERT INTO users (username, email, password_hash, email_verified, verify_token_hash, verify_token_expires, is_admin)
-    VALUES (?, ?, ?, 0, ?, ?, ?)
-  `).run(name, email.toLowerCase(), passwordHash, tokenHash, expires, isAdmin);
-
-  try {
-    await sendVerificationEmail(email, token);
-  } catch (err) {
-    console.error('sendVerificationEmail failed:', err);
-  }
-
-  res.status(201).json({ status: 'pending_verification', email: email.toLowerCase() });
-});
-
-// Hit by clicking the link in the verification email — plain HTML response, no SPA involved.
-app.get('/api/verify', (req, res) => {
-  const token = typeof req.query.token === 'string' ? req.query.token : '';
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const user = token ? db.prepare('SELECT * FROM users WHERE verify_token_hash = ?').get(tokenHash) : null;
-
-  const page = (title, message) => res.type('html').send(`<!doctype html>
-<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
-<style>body{font-family:system-ui,sans-serif;background:#17131f;color:#f1edf9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:24px}
-h1{font-size:22px}p{color:#b3a9c4}</style></head>
-<body><div><h1>${title}</h1><p>${message}</p></div></body></html>`);
-
-  if (!user) return page('Invalid link', 'This verification link is invalid or has already been used.');
-  if (!user.verify_token_expires || new Date(user.verify_token_expires) < new Date()) {
-    return page('Link expired', 'This verification link has expired. Please sign up again.');
-  }
-
-  db.prepare('UPDATE users SET email_verified = 1, verify_token_hash = NULL, verify_token_expires = NULL WHERE id = ?').run(user.id);
-  page('Email verified 🎉', 'You can close this tab and log back in to The Beast Game.');
+  const token = createSession(user.id);
+  res.status(201).json({ displayName: user.username, token, isAdmin: !!user.is_admin });
 });
 
 app.post('/api/login', authLimiter, async (req, res) => {
@@ -613,7 +664,9 @@ app.get('/api/me/dares', requireAuth, (req, res) => {
 
 // --- Leaderboard ---
 app.get('/api/leaderboard', (req, res) => {
-  const users = db.prepare('SELECT id, username FROM users').all();
+  // Exclude signups that were started but never finished (no password set
+  // yet) — they're not real, usable accounts, just claimed usernames.
+  const users = db.prepare('SELECT id, username FROM users WHERE password_hash IS NOT NULL').all();
   const board = users
     .map((u) => {
       const stats = computeUserStats(u.id);
@@ -638,7 +691,7 @@ app.get('/api/users/:username/search', (req, res) => {
   const q = (req.query.q || '').trim();
   if (q.length < 1) return res.json([]);
   const results = db.prepare(`
-    SELECT username FROM users WHERE username LIKE ? AND id != ? LIMIT 10
+    SELECT username FROM users WHERE username LIKE ? AND id != ? AND password_hash IS NOT NULL LIMIT 10
   `).all(`%${q}%`, user.id).map((r) => r.username);
   res.json(results);
 });
@@ -650,7 +703,7 @@ app.get('/api/users/:username/search', (req, res) => {
 app.get('/api/me/random-beast', requireAuth, (req, res) => {
   const hidden = new Set(getHiddenUserIds(req.authUser.id));
   hidden.add(req.authUser.id);
-  const rows = db.prepare(`SELECT id, username FROM users WHERE banned = 0 AND email_verified = 1`).all();
+  const rows = db.prepare(`SELECT id, username FROM users WHERE banned = 0 AND email_verified = 1 AND password_hash IS NOT NULL`).all();
   const pool = rows.filter((u) => !hidden.has(u.id));
   if (!pool.length) return res.status(404).json({ error: 'No one else to tag yet' });
   const pick = pool[Math.floor(Math.random() * pool.length)];
@@ -1239,7 +1292,7 @@ app.get('/privacy', (req, res) => {
 <p>Last updated: ${new Date().toISOString().slice(0, 10)}</p>
 
 <h2>What we collect</h2>
-<p>Email address (for login and account recovery — never shown publicly), a display name (shown publicly on posts and the leaderboard), your password (stored as a bcrypt hash, never in plain text), and photos you upload as part of posts.</p>
+<p>Your name (private — used internally, never shown to other users), an email address (for login and account recovery — never shown publicly), a display name/username (shown publicly on posts and the leaderboard), your password (stored as a bcrypt hash, never in plain text), and photos you upload as part of posts.</p>
 
 <h2>How we use it</h2>
 <p>To operate the app: authenticate you, show your display name on content you post or are credited in, calculate points and leaderboard standing, and send you a one-time verification email via Resend when you sign up.</p>

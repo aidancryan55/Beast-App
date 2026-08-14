@@ -252,6 +252,21 @@
   opacity: 0.35;
 }
 
+.onboard-resend {
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  text-decoration: underline;
+}
+
+.onboard-resend:disabled {
+  opacity: 0.5;
+  text-decoration: none;
+}
+
 /* ---------- App shell ---------- */
 .app {
   max-width: 880px;
