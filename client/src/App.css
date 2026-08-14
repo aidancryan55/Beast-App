@@ -66,19 +66,19 @@
 }
 
 .auth-toggle button {
-  border: 1px solid var(--border);
-  background: var(--bg);
+  border: 1px solid transparent;
   padding: 16px;
   border-radius: 999px;
   font-weight: 700;
   font-size: 15px;
-  color: var(--text-dim);
-}
-
-.auth-toggle button.active {
   background: var(--primary);
   color: var(--primary-contrast);
-  border-color: transparent;
+}
+
+.auth-toggle button.secondary {
+  background: var(--bg);
+  color: var(--text-dim);
+  border-color: var(--border);
 }
 
 .login-card form {
@@ -159,6 +159,97 @@
 .unverified-block p:first-child {
   font-weight: 700;
   margin-bottom: 4px;
+}
+
+/* ---------- Onboarding wizard (one question per screen) ---------- */
+.onboard-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px calc(28px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+}
+
+.onboard-back {
+  align-self: flex-start;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.onboard-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-top: 40px;
+}
+
+.onboard-wordmark {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  color: var(--text-dim);
+  margin: 0 0 20px;
+}
+
+.onboard-question {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  margin: 0 0 36px;
+  text-wrap: balance;
+}
+
+.onboard-input {
+  font-size: 26px;
+  font-weight: 700;
+  padding: 4px 0 14px;
+  border: none;
+  border-bottom: 2px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 0;
+}
+
+.onboard-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+.onboard-input:focus {
+  outline: none;
+  border-bottom-color: var(--primary);
+}
+
+.onboard-hint {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.onboard-continue {
+  margin-top: auto;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 16px;
+  border-radius: 999px;
+  border: none;
+  background: var(--primary);
+  color: var(--primary-contrast);
+}
+
+.onboard-continue:disabled {
+  opacity: 0.35;
 }
 
 /* ---------- App shell ---------- */

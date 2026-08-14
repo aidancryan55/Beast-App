@@ -3,7 +3,8 @@ import { api } from './api';
 import './App.css';
 
 function LoginScreen({ onLogin, onSignup }) {
-  const [mode, setMode] = useState('login');
+  // 'landing' | 'signup-name' | 'signup-email' | 'signup-password' | 'login'
+  const [screen, setScreen] = useState('landing');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -12,21 +13,30 @@ function LoginScreen({ onLogin, onSignup }) {
   const [loading, setLoading] = useState(false);
   const [checkEmail, setCheckEmail] = useState('');
 
-  async function submit(e) {
+  async function submitLogin(e) {
     e.preventDefault();
     setError('');
     setErrorCode('');
     setLoading(true);
     try {
-      if (mode === 'signup') {
-        await onSignup(email.trim(), password, displayName.trim());
-        setCheckEmail(email.trim());
-      } else {
-        await onLogin(email.trim(), password);
-      }
+      await onLogin(email.trim(), password);
     } catch (err) {
       setError(err.message);
       setErrorCode(err.code || '');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function finishSignup(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await onSignup(email.trim(), password, displayName.trim());
+      setCheckEmail(email.trim());
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -38,15 +48,119 @@ function LoginScreen({ onLogin, onSignup }) {
         <div className="login-card">
           <h1>Check your email</h1>
           <p className="tagline">We sent a confirmation link to <strong>{checkEmail}</strong>. Tap it to verify your account, then come back and log in.</p>
-          <button type="button" onClick={() => { setCheckEmail(''); setMode('login'); }}>Back to log in</button>
+          <button type="button" onClick={() => { setCheckEmail(''); setScreen('login'); }}>Back to log in</button>
         </div>
       </div>
     );
   }
 
-  const canSubmit = mode === 'login'
-    ? email.trim().length > 2 && password.length >= 8
-    : email.trim().length > 2 && password.length >= 8 && displayName.trim().length > 0;
+  if (screen === 'signup-name') {
+    return (
+      <div className="onboard-screen">
+        <button type="button" className="onboard-back" onClick={() => setScreen('landing')} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (displayName.trim()) setScreen('signup-email'); }}>
+          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <h1 className="onboard-question">Let's get started — what should we call you?</h1>
+          <input
+            className="onboard-input"
+            autoFocus
+            placeholder="Your name"
+            value={displayName}
+            maxLength={30}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+          <p className="onboard-hint">Shown publicly on the leaderboard and on posts — you can't change this later, so pick something you'll want to keep.</p>
+          <button type="submit" className="onboard-continue" disabled={!displayName.trim()}>Continue</button>
+        </form>
+      </div>
+    );
+  }
+
+  if (screen === 'signup-email') {
+    return (
+      <div className="onboard-screen">
+        <button type="button" className="onboard-back" onClick={() => setScreen('signup-name')} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (email.trim().length > 2) setScreen('signup-password'); }}>
+          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <h1 className="onboard-question">What's your email?</h1>
+          <input
+            className="onboard-input"
+            autoFocus
+            type="email"
+            placeholder="you@school.edu"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <p className="onboard-hint">Stays private — only used to sign in and recover your account.</p>
+          <button type="submit" className="onboard-continue" disabled={email.trim().length <= 2}>Continue</button>
+        </form>
+      </div>
+    );
+  }
+
+  if (screen === 'signup-password') {
+    return (
+      <div className="onboard-screen">
+        <button type="button" className="onboard-back" onClick={() => setScreen('signup-email')} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={finishSignup}>
+          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <h1 className="onboard-question">Create a password</h1>
+          <input
+            className="onboard-input"
+            autoFocus
+            type="password"
+            placeholder="Min 8 characters"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          {error && <p className="error">{error}</p>}
+          <button type="submit" className="onboard-continue" disabled={loading || password.length < 8}>
+            {loading ? 'Creating…' : 'Create Account'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  if (screen === 'login') {
+    return (
+      <div className="login-screen">
+        <div className="login-hero">
+          <div className="login-wordmark">THE BEAST GAME</div>
+          <h1 className="login-headline">Catch your friends<br />being beasts.</h1>
+          <p className="login-subtext">Earn Beast Points. Become a Beast.</p>
+        </div>
+        <div className="login-card">
+          <form onSubmit={submitLogin}>
+            <input
+              autoFocus
+              placeholder="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <input
+              placeholder="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button type="submit" disabled={loading || email.trim().length <= 2 || password.length < 8}>
+              {loading ? 'Loading…' : 'Log In'}
+            </button>
+          </form>
+          {error && errorCode === 'unverified' && (
+            <div className="unverified-block">
+              <p>Almost there — verify your email first.</p>
+              <p className="fineprint">Check your inbox for the confirmation link we sent when you signed up.</p>
+            </div>
+          )}
+          {error && errorCode !== 'unverified' && <p className="error">{error}</p>}
+          <button type="button" onClick={() => { setScreen('landing'); setError(''); }}>Back</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="login-screen">
@@ -55,45 +169,11 @@ function LoginScreen({ onLogin, onSignup }) {
         <h1 className="login-headline">Catch your friends<br />being beasts.</h1>
         <p className="login-subtext">Earn Beast Points. Become a Beast.</p>
       </div>
-
       <div className="login-card">
         <div className="auth-toggle">
-          <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError(''); }}>Create Account</button>
-          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>Log In</button>
+          <button type="button" onClick={() => { setError(''); setScreen('signup-name'); }}>Create Account</button>
+          <button type="button" className="secondary" onClick={() => { setError(''); setScreen('login'); }}>Log In</button>
         </div>
-        <form onSubmit={submit}>
-          <input
-            autoFocus
-            placeholder="Email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          {mode === 'signup' && (
-            <input
-              placeholder="Display name (shown publicly)"
-              value={displayName}
-              maxLength={30}
-              onChange={(e) => setDisplayName(e.target.value)}
-            />
-          )}
-          <input
-            placeholder="Password (min 8 characters)"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <button type="submit" disabled={loading || !canSubmit}>
-            {loading ? 'Loading…' : mode === 'login' ? 'Log In' : 'Create Account'}
-          </button>
-        </form>
-        {error && errorCode === 'unverified' && (
-          <div className="unverified-block">
-            <p>Almost there — verify your email first.</p>
-            <p className="fineprint">Check your inbox for the confirmation link we sent when you signed up.</p>
-          </div>
-        )}
-        {error && errorCode !== 'unverified' && <p className="error">{error}</p>}
         <p className="fineprint">Your display name is shown publicly on the leaderboard and on posts anyone can see in Discover — your email stays private and is only used to sign in.</p>
         <p className="fineprint"><a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></p>
       </div>
