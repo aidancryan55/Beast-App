@@ -368,6 +368,9 @@ function isGroupMember(groupId, userId) {
 function getGroupMemberIds(groupId) {
   return db.prepare('SELECT user_id FROM group_members WHERE group_id = ?').all(groupId).map((r) => r.user_id);
 }
+function hasPendingGroupRequest(groupId, userId) {
+  return !!db.prepare('SELECT 1 FROM group_join_requests WHERE group_id = ? AND user_id = ?').get(groupId, userId);
+}
 function serializeGroup(group, viewerUserId) {
   const memberIds = getGroupMemberIds(group.id);
   const members = memberIds.map((id) => db.prepare('SELECT username FROM users WHERE id = ?').get(id)?.username).filter(Boolean);
@@ -375,10 +378,14 @@ function serializeGroup(group, viewerUserId) {
     id: group.id,
     name: group.name,
     description: group.description,
+    visibility: group.visibility,
+    hasPassword: !!group.password_hash,
     memberCount: memberIds.length,
     maxMembers: GROUP_MAX_MEMBERS,
     members,
     isMember: viewerUserId ? memberIds.includes(viewerUserId) : false,
+    isModerator: viewerUserId ? viewerUserId === group.created_by_user_id : false,
+    hasPendingRequest: viewerUserId ? hasPendingGroupRequest(group.id, viewerUserId) : false,
     createdByUsername: db.prepare('SELECT username FROM users WHERE id = ?').get(group.created_by_user_id)?.username,
   };
 }
@@ -905,14 +912,20 @@ app.get('/api/users/:username/groups/discover', (req, res) => {
   res.json(groups.map((g) => serializeGroup(g, user.id)));
 });
 
-app.post('/api/groups', requireAuth, (req, res) => {
-  const { name, description } = req.body || {};
+app.post('/api/groups', requireAuth, async (req, res) => {
+  const { name, description, password } = req.body || {};
+  const visibility = req.body?.visibility === 'private' ? 'private' : 'public';
   if (!name || !name.trim() || name.trim().length > 40) {
     return res.status(400).json({ error: 'Group name must be 1-40 characters' });
   }
+  if (visibility === 'private' && password && password.length < 4) {
+    return res.status(400).json({ error: 'Group password must be at least 4 characters' });
+  }
+  const passwordHash = visibility === 'private' && password ? await hashPassword(password) : null;
+
   const info = db.prepare(`
-    INSERT INTO groups (name, description, created_by_user_id) VALUES (?, ?, ?)
-  `).run(name.trim(), (description || '').trim() || null, req.authUser.id);
+    INSERT INTO groups (name, description, visibility, password_hash, created_by_user_id) VALUES (?, ?, ?, ?, ?)
+  `).run(name.trim(), (description || '').trim() || null, visibility, passwordHash, req.authUser.id);
   db.prepare('INSERT INTO group_members (group_id, user_id) VALUES (?, ?)').run(info.lastInsertRowid, req.authUser.id);
 
   const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(info.lastInsertRowid);
@@ -926,15 +939,69 @@ app.get('/api/groups/:groupId', (req, res) => {
   res.json(serializeGroup(group, viewer ? viewer.id : null));
 });
 
-app.post('/api/groups/:groupId/join', requireAuth, (req, res) => {
+// Three ways in, depending on how the group was set up:
+//  - public: joins immediately, no barrier.
+//  - private + password set: joins immediately if the password matches.
+//  - private + no password: creates a pending request the moderator
+//    (creator) has to approve — see /requests endpoints below.
+app.post('/api/groups/:groupId/join', requireAuth, async (req, res) => {
   const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
   if (!group) return res.status(404).json({ error: 'Group not found' });
   if (isGroupMember(group.id, req.authUser.id)) return res.status(400).json({ error: 'Already in this group' });
   if (getGroupMemberIds(group.id).length >= GROUP_MAX_MEMBERS) {
     return res.status(400).json({ error: `This group is full (max ${GROUP_MAX_MEMBERS})` });
   }
+
+  if (group.visibility === 'private' && group.password_hash) {
+    const ok = await verifyPassword((req.body || {}).password || '', group.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Wrong password' });
+  } else if (group.visibility === 'private') {
+    if (hasPendingGroupRequest(group.id, req.authUser.id)) {
+      return res.status(400).json({ error: 'Request already sent' });
+    }
+    db.prepare('INSERT INTO group_join_requests (group_id, user_id) VALUES (?, ?)').run(group.id, req.authUser.id);
+    return res.status(201).json({ status: 'requested', group: serializeGroup(group, req.authUser.id) });
+  }
+
   db.prepare('INSERT INTO group_members (group_id, user_id) VALUES (?, ?)').run(group.id, req.authUser.id);
-  res.json(serializeGroup(group, req.authUser.id));
+  res.json({ status: 'joined', group: serializeGroup(group, req.authUser.id) });
+});
+
+app.delete('/api/groups/:groupId/request', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM group_join_requests WHERE group_id = ? AND user_id = ?').run(req.params.groupId, req.authUser.id);
+  res.json({ status: 'cancelled' });
+});
+
+app.get('/api/groups/:groupId/requests', requireAuth, (req, res) => {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  if (group.created_by_user_id !== req.authUser.id) return res.status(403).json({ error: 'Only the moderator can view requests' });
+  const rows = db.prepare(`
+    SELECT r.user_id, u.username FROM group_join_requests r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.group_id = ? ORDER BY r.created_at ASC
+  `).all(group.id);
+  res.json(rows.map((r) => ({ userId: r.user_id, username: r.username })));
+});
+
+app.post('/api/groups/:groupId/requests/:userId/respond', requireAuth, (req, res) => {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  if (group.created_by_user_id !== req.authUser.id) return res.status(403).json({ error: 'Only the moderator can respond to requests' });
+  const request = db.prepare('SELECT * FROM group_join_requests WHERE group_id = ? AND user_id = ?').get(group.id, req.params.userId);
+  if (!request) return res.status(404).json({ error: 'Request not found' });
+
+  const action = (req.body || {}).action;
+  db.prepare('DELETE FROM group_join_requests WHERE id = ?').run(request.id);
+  if (action === 'approve') {
+    if (getGroupMemberIds(group.id).length >= GROUP_MAX_MEMBERS) {
+      return res.status(400).json({ error: `This group is full (max ${GROUP_MAX_MEMBERS})` });
+    }
+    db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(group.id, request.user_id);
+    return res.json({ status: 'approved' });
+  }
+  if (action === 'decline') return res.json({ status: 'declined' });
+  res.status(400).json({ error: "action must be 'approve' or 'decline'" });
 });
 
 app.post('/api/groups/:groupId/leave', requireAuth, (req, res) => {

@@ -66,9 +66,14 @@ export const api = {
 
   getGroups: (displayName) => req(`/users/${encodeURIComponent(displayName)}/groups`),
   discoverGroups: (displayName, q = '') => req(`/users/${encodeURIComponent(displayName)}/groups/discover?q=${encodeURIComponent(q)}`),
-  createGroup: (name, description) => req('/groups', { method: 'POST', body: JSON.stringify({ name, description }) }),
+  createGroup: (name, description, visibility, password) =>
+    req('/groups', { method: 'POST', body: JSON.stringify({ name, description, visibility, password }) }),
   getGroup: (groupId, viewerDisplayName) => req(`/groups/${groupId}?viewerUsername=${encodeURIComponent(viewerDisplayName)}`),
-  joinGroup: (groupId) => req(`/groups/${groupId}/join`, { method: 'POST' }),
+  joinGroup: (groupId, password) => req(`/groups/${groupId}/join`, { method: 'POST', body: JSON.stringify({ password }) }),
+  cancelGroupRequest: (groupId) => req(`/groups/${groupId}/request`, { method: 'DELETE' }),
+  getGroupRequests: (groupId) => req(`/groups/${groupId}/requests`),
+  respondToGroupRequest: (groupId, userId, action) =>
+    req(`/groups/${groupId}/requests/${userId}/respond`, { method: 'POST', body: JSON.stringify({ action }) }),
   leaveGroup: (groupId) => req(`/groups/${groupId}/leave`, { method: 'POST' }),
   getGroupFeed: (groupId) => req(`/groups/${groupId}/feed`),
 

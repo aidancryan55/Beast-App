@@ -1077,6 +1077,9 @@ function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, o
 function CreateGroupForm({ onCreate, onClose }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [visibility, setVisibility] = useState('public');
+  const [gateType, setGateType] = useState('approval'); // 'approval' | 'password' — only matters when private
+  const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -1085,7 +1088,8 @@ function CreateGroupForm({ onCreate, onClose }) {
     setError('');
     setSubmitting(true);
     try {
-      await onCreate(name.trim(), description.trim());
+      const pw = visibility === 'private' && gateType === 'password' ? password.trim() : '';
+      await onCreate(name.trim(), description.trim(), visibility, pw);
       onClose();
     } catch (err) {
       setError(err.message);
@@ -1093,6 +1097,8 @@ function CreateGroupForm({ onCreate, onClose }) {
       setSubmitting(false);
     }
   }
+
+  const passwordInvalid = visibility === 'private' && gateType === 'password' && password.trim().length > 0 && password.trim().length < 4;
 
   return (
     <div className="credit-modal-backdrop" onClick={onClose}>
@@ -1106,28 +1112,102 @@ function CreateGroupForm({ onCreate, onClose }) {
           Description (optional)
           <input value={description} maxLength={140} onChange={(e) => setDescription(e.target.value)} placeholder="What's this group about?" />
         </label>
+
+        <div className="destination-toggle">
+          <button type="button" className={visibility === 'public' ? 'active' : ''} onClick={() => setVisibility('public')}>Public</button>
+          <button type="button" className={visibility === 'private' ? 'active' : ''} onClick={() => setVisibility('private')}>Private</button>
+        </div>
+        {visibility === 'public' && <p className="fineprint">Anyone can join instantly — no approval needed.</p>}
+
+        {visibility === 'private' && (
+          <>
+            <div className="destination-toggle">
+              <button type="button" className={gateType === 'approval' ? 'active' : ''} onClick={() => setGateType('approval')}>You approve members</button>
+              <button type="button" className={gateType === 'password' ? 'active' : ''} onClick={() => setGateType('password')}>Set a password</button>
+            </div>
+            {gateType === 'approval' && <p className="fineprint">People can request to join — you decide who gets in.</p>}
+            {gateType === 'password' && (
+              <label>
+                Group password
+                <input
+                  type="text"
+                  maxLength={40}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Min 4 characters"
+                />
+              </label>
+            )}
+          </>
+        )}
+
         {error && <p className="error">{error}</p>}
         <div className="credit-modal-actions">
           <button type="button" className="secondary-btn" onClick={onClose}>Cancel</button>
-          <button type="submit" disabled={submitting || name.trim().length < 1}>{submitting ? 'Creating…' : 'Create'}</button>
+          <button
+            type="submit"
+            disabled={submitting || name.trim().length < 1 || passwordInvalid || (visibility === 'private' && gateType === 'password' && password.trim().length < 4)}
+          >
+            {submitting ? 'Creating…' : 'Create'}
+          </button>
         </div>
       </form>
     </div>
   );
 }
 
-function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock }) {
+function GroupRequestsSection({ groupId, onApprovedOrDeclined }) {
+  const [requests, setRequests] = useState(null); // null = still loading
+
+  async function refresh() {
+    setRequests(await api.getGroupRequests(groupId));
+  }
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId]);
+
+  async function respond(userId, action) {
+    await api.respondToGroupRequest(groupId, userId, action);
+    await refresh();
+    if (action === 'approve') await onApprovedOrDeclined();
+  }
+
+  if (!requests || requests.length === 0) return null;
+
+  return (
+    <section className="friend-section">
+      <h2>Requests to join ({requests.length})</h2>
+      {requests.map((r) => (
+        <div key={r.userId} className="friend-row">
+          <span>{r.username}</span>
+          <div className="friend-row-actions">
+            <button className="friend-action" onClick={() => respond(r.userId, 'approve')}>Approve</button>
+            <button className="friend-action remove" onClick={() => respond(r.userId, 'decline')}>Decline</button>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onRefreshGroup }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="group-detail">
       <button className="back-btn" onClick={onBack}>← All groups</button>
       <div className="group-detail-header">
-        <h2>{group.name}</h2>
+        <h2>{group.name} {group.visibility === 'private' && <span className="friend-status">private</span>}</h2>
         {group.description && <p className="group-description">{group.description}</p>}
         <p className="group-member-count">{group.memberCount}/{group.maxMembers} members</p>
         <div className="group-members-list">{group.members.join(', ')}</div>
         <button className="friend-action remove" onClick={() => onLeave(group.id)}>Leave group</button>
       </div>
+
+      {group.isModerator && group.visibility === 'private' && !group.hasPassword && (
+        <GroupRequestsSection groupId={group.id} onApprovedOrDeclined={onRefreshGroup} />
+      )}
 
       <button className="credit-friend-btn" onClick={() => setShowForm(true)}>Post to {group.name}</button>
       {showForm && (
@@ -1156,7 +1236,73 @@ function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSub
   );
 }
 
-function GroupsView({ myGroups, discoverGroups, onSearchGroups, onCreateGroup, onJoinGroup, onOpenGroup }) {
+function DiscoverGroupRow({ group, onJoin, onCancelRequest }) {
+  const [showPasswordInput, setShowPasswordInput] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const full = group.memberCount >= group.maxMembers;
+
+  async function submitPassword(e) {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      await onJoin(group.id, password);
+      setShowPasswordInput(false);
+      setPassword('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function requestOrJoin() {
+    if (group.visibility === 'private' && group.hasPassword) {
+      setShowPasswordInput(true);
+      return;
+    }
+    setError('');
+    try {
+      await onJoin(group.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <div className="friend-row">
+      <span>
+        {group.name} {group.visibility === 'private' && <span className="friend-status">private</span>}{' '}
+        <span className="friend-status">{group.memberCount}/{group.maxMembers}</span>
+      </span>
+
+      {group.hasPendingRequest ? (
+        <button className="friend-action" onClick={() => onCancelRequest(group.id)}>Cancel request</button>
+      ) : showPasswordInput ? (
+        <form className="dare-form" onSubmit={submitPassword}>
+          <input
+            type="text"
+            placeholder="Group password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+          />
+          <button type="submit" disabled={submitting || !password.trim()}>Join</button>
+        </form>
+      ) : (
+        <button className="friend-action" onClick={requestOrJoin} disabled={full}>
+          {full ? 'Full' : group.visibility === 'private' && !group.hasPassword ? 'Request to join' : 'Join'}
+        </button>
+      )}
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function GroupsView({ myGroups, discoverGroups, onSearchGroups, onCreateGroup, onJoinGroup, onCancelGroupRequest, onOpenGroup }) {
   const [showCreate, setShowCreate] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -1170,7 +1316,7 @@ function GroupsView({ myGroups, discoverGroups, onSearchGroups, onCreateGroup, o
         {myGroups.length === 0 && <div className="empty-state">You're not in any groups yet.</div>}
         {myGroups.map((g) => (
           <button key={g.id} className="group-row" onClick={() => onOpenGroup(g.id)}>
-            <span className="group-row-name">{g.name}</span>
+            <span className="group-row-name">{g.name} {g.visibility === 'private' && <span className="friend-status">private</span>}</span>
             <span className="group-row-meta">{g.memberCount}/{g.maxMembers} members</span>
           </button>
         ))}
@@ -1185,12 +1331,7 @@ function GroupsView({ myGroups, discoverGroups, onSearchGroups, onCreateGroup, o
           onChange={(e) => { setQuery(e.target.value); onSearchGroups(e.target.value); }}
         />
         {discoverGroups.map((g) => (
-          <div key={g.id} className="friend-row">
-            <span>{g.name} <span className="friend-status">{g.memberCount}/{g.maxMembers}</span></span>
-            <button className="friend-action" onClick={() => onJoinGroup(g.id)} disabled={g.memberCount >= g.maxMembers}>
-              {g.memberCount >= g.maxMembers ? 'Full' : 'Join'}
-            </button>
-          </div>
+          <DiscoverGroupRow key={g.id} group={g} onJoin={onJoinGroup} onCancelRequest={onCancelGroupRequest} />
         ))}
       </section>
     </div>
@@ -1915,6 +2056,8 @@ export default function App() {
     api.setToken(null);
     setAuth(null);
     setProgress(null);
+    setDiscoverGroupsList([]);
+    setGroupSearchQuery('');
   }
 
   async function withAuthGuard(fn) {
@@ -2019,17 +2162,24 @@ export default function App() {
     return withAuthGuard(() => api.createActivity(name));
   }
 
-  async function handleCreateGroup(name, description) {
+  async function handleCreateGroup(name, description, visibility, password) {
     await withAuthGuard(async () => {
-      await api.createGroup(name, description);
+      await api.createGroup(name, description, visibility, password);
       await refreshGroups();
     });
   }
 
-  async function handleJoinGroup(groupId) {
+  async function handleJoinGroup(groupId, password) {
     await withAuthGuard(async () => {
-      await api.joinGroup(groupId);
+      await api.joinGroup(groupId, password);
       await refreshGroups();
+      await refreshDiscoverGroups(groupSearchQuery);
+    });
+  }
+
+  async function handleCancelGroupRequest(groupId) {
+    await withAuthGuard(async () => {
+      await api.cancelGroupRequest(groupId);
       await refreshDiscoverGroups(groupSearchQuery);
     });
   }
@@ -2081,6 +2231,8 @@ export default function App() {
     api.setToken(null);
     setAuth(null);
     setProgress(null);
+    setDiscoverGroupsList([]);
+    setGroupSearchQuery('');
   }
 
   async function refreshAdminReports() {
@@ -2146,9 +2298,6 @@ export default function App() {
         </div>
       )}
 
-      <XpBar levelInfo={progress.levelInfo} />
-      <PeriodTotals periodTotals={progress.periodTotals} />
-
       <main className="app-main">
         <div key={tab === 'groups' ? `groups-${activeGroupId || 'list'}` : tab} className="app-main-content">
         {tab === 'discover' && (
@@ -2176,6 +2325,7 @@ export default function App() {
             onSearchGroups={refreshDiscoverGroups}
             onCreateGroup={handleCreateGroup}
             onJoinGroup={handleJoinGroup}
+            onCancelGroupRequest={handleCancelGroupRequest}
             onOpenGroup={handleOpenGroup}
           />
         )}
@@ -2194,9 +2344,16 @@ export default function App() {
             onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
             onBlock={handleBlockUser}
+            onRefreshGroup={refreshGroups}
           />
         )}
-        {tab === 'leaderboard' && <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} />}
+        {tab === 'leaderboard' && (
+          <>
+            <XpBar levelInfo={progress.levelInfo} />
+            <PeriodTotals periodTotals={progress.periodTotals} />
+            <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} />
+          </>
+        )}
         {tab === 'profile' && (
           <ProfileView
             displayName={displayName}
@@ -2236,7 +2393,7 @@ export default function App() {
       <nav className="bottom-nav">
         <button className={`bottom-nav-btn ${tab === 'discover' ? 'active' : ''}`} onClick={() => setTab('discover')}>
           <span className="bottom-nav-icon"><IconHome /></span>
-          <span className="bottom-nav-label">BLF</span>
+          <span className="bottom-nav-label">Discover</span>
         </button>
         <button className={`bottom-nav-btn ${tab === 'groups' ? 'active' : ''}`} onClick={() => { setTab('groups'); setActiveGroupId(null); }}>
           <span className="bottom-nav-icon"><IconUsers /></span>

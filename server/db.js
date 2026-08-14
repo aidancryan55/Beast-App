@@ -115,6 +115,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
+    visibility TEXT NOT NULL DEFAULT 'public',
+    password_hash TEXT,
     created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -124,6 +126,18 @@ db.exec(`
     group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(group_id, user_id)
+  );
+
+  -- Pending join requests for private groups with no password set — the
+  -- moderator (group creator) approves or declines each one. Private groups
+  -- WITH a password skip this table entirely (join is instant once the
+  -- password checks out); this only exists for the moderator-approval mode.
+  CREATE TABLE IF NOT EXISTS group_join_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(group_id, user_id)
   );
 
@@ -259,6 +273,15 @@ if (process.env.ADMIN_EMAIL) {
 // referenced table breaks their FK target). Instead, account deletion always
 // explicitly detaches ownership (UPDATE groups SET created_by_user_id = NULL)
 // before deleting the user row, which sidesteps the CASCADE either way.
+
+// --- Migrations for databases created before private/password groups existed ---
+const groupCols = db.prepare('PRAGMA table_info(groups)').all().map((c) => c.name);
+if (!groupCols.includes('visibility')) {
+  db.exec(`ALTER TABLE groups ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'`);
+}
+if (!groupCols.includes('password_hash')) {
+  db.exec('ALTER TABLE groups ADD COLUMN password_hash TEXT');
+}
 
 // --- Migrations for databases created before `repeatable` / `period_key` existed ---
 const activityCols = db.prepare('PRAGMA table_info(activities)').all().map((c) => c.name);
