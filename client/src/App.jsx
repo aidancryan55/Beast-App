@@ -171,7 +171,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => setScreen('landing')} aria-label="Back">‹</button>
         <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (realName.trim()) setScreen('signup-username'); }}>
-          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <p className="onboard-wordmark">CATCH A BEAST</p>
           <h1 className="onboard-question">Let's get started — what's your name?</h1>
           <input
             className="onboard-input"
@@ -193,7 +193,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => setScreen('signup-realname')} aria-label="Back">‹</button>
         <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (username.trim()) setScreen('signup-avatar'); }}>
-          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <p className="onboard-wordmark">CATCH A BEAST</p>
           <h1 className="onboard-question">Next, create your username</h1>
           <input
             className="onboard-input"
@@ -215,7 +215,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => setScreen('signup-username')} aria-label="Back">‹</button>
         <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); setScreen('signup-email'); }}>
-          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <p className="onboard-wordmark">CATCH A BEAST</p>
           <h1 className="onboard-question">Add a profile picture</h1>
           <button type="button" className="onboard-avatar-btn" onClick={() => avatarInputRef.current?.click()}>
             {avatarPreview ? <img src={avatarPreview} alt="" /> : <span className="onboard-avatar-placeholder">+</span>}
@@ -233,7 +233,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => setScreen('signup-avatar')} aria-label="Back">‹</button>
         <form className="onboard-body" onSubmit={submitEmail}>
-          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <p className="onboard-wordmark">CATCH A BEAST</p>
           <h1 className="onboard-question">What's your email?</h1>
           <input
             className="onboard-input"
@@ -258,7 +258,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => { setError(''); setScreen('signup-email'); }} aria-label="Back">‹</button>
         <form className="onboard-body" onSubmit={submitCode}>
-          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <p className="onboard-wordmark">CATCH A BEAST</p>
           <h1 className="onboard-question">Enter the code we sent to<br />{email}</h1>
           <input
             className="onboard-input"
@@ -288,7 +288,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
     return (
       <div className="onboard-screen">
         <form className="onboard-body" onSubmit={finishSignup}>
-          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <p className="onboard-wordmark">CATCH A BEAST</p>
           <h1 className="onboard-question">Create a password</h1>
           <input
             className="onboard-input"
@@ -311,7 +311,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
     return (
       <div className="login-screen">
         <div className="login-hero">
-          <div className="login-wordmark">THE BEAST GAME</div>
+          <div className="login-wordmark">CATCH A BEAST</div>
           <h1 className="login-headline">Catch your friends<br />being beasts.</h1>
           <p className="login-subtext">Earn Beast Points. Become a Beast.</p>
         </div>
@@ -350,7 +350,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
   return (
     <div className="login-screen">
       <div className="login-hero">
-        <div className="login-wordmark">THE BEAST GAME</div>
+        <div className="login-wordmark">CATCH A BEAST</div>
         <h1 className="login-headline">Catch your friends<br />being beasts.</h1>
         <p className="login-subtext">Earn Beast Points. Become a Beast.</p>
       </div>
@@ -2277,7 +2277,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="app-title">The Beast Game</div>
+        <div className="app-title">Catch a Beast</div>
         <div className="app-user">
           {progress.streak.current > 0 && (
             <span className="streak-badge" title={`Longest: ${progress.streak.longest} days`}>

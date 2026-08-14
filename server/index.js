@@ -106,7 +106,7 @@ function generateEmailCode() {
 }
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM = process.env.RESEND_FROM || 'The Beast Game <onboarding@resend.dev>';
+const RESEND_FROM = process.env.RESEND_FROM || 'Catch a Beast <onboarding@resend.dev>';
 const APP_URL = process.env.APP_URL || `http://localhost:${process.env.PORT || 4001}`;
 
 async function sendVerificationCode(email, code) {
@@ -121,7 +121,7 @@ async function sendVerificationCode(email, code) {
     body: JSON.stringify({
       from: RESEND_FROM,
       to: email,
-      subject: 'Your Beast Game verification code',
+      subject: 'Your Catch a Beast verification code',
       html: `<p>Your verification code is:</p>
              <p style="font-size: 28px; font-weight: 700; letter-spacing: 4px;">${code}</p>
              <p>This code expires in 10 minutes.</p>`,
@@ -1492,7 +1492,7 @@ app.get('/privacy', (req, res) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Privacy Policy — The Beast Game</title>
+<title>Privacy Policy — Catch a Beast</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px 20px 60px; line-height: 1.6; color: #1a1a1a; }
   h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; margin-top: 2em; }
@@ -1500,7 +1500,7 @@ app.get('/privacy', (req, res) => {
 </style>
 </head>
 <body>
-<h1>Privacy Policy — The Beast Game</h1>
+<h1>Privacy Policy — Catch a Beast</h1>
 <p>Last updated: ${new Date().toISOString().slice(0, 10)}</p>
 
 <h2>What we collect</h2>
@@ -1536,4 +1536,4 @@ app.get(/^(?!\/api\/).*/, (req, res) => {
 });
 
 const PORT = process.env.PORT || 4001;
-app.listen(PORT, () => console.log(`The Beast Game listening on :${PORT}`));
+app.listen(PORT, () => console.log(`Catch a Beast listening on :${PORT}`));

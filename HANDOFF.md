@@ -1,10 +1,10 @@
-# HANDOFF — The Beast Game
+# HANDOFF — Catch a Beast
 
 Written 2026-08-03 for a fresh Claude session with zero memory of prior conversations. Read this whole file before touching code.
 
 ## What this app is
 
-"The Beast Game" — a social gamification app for college students. Users photo-credit each other doing dumb/fun "beast" activities, post publicly (Discover feed) or to Groups (2-30 members), earn "Beast Points" from crowd-sourced credit, level up (Squid → Normie → Ferda Beast), and see a leaderboard. Photos auto-expire after 24h unless saved.
+"Catch a Beast" (formerly "The Beast Game") — a social gamification app for college students. Users photo-credit each other doing dumb/fun "beast" activities, post publicly (Discover feed) or to Groups (2-30 members), earn "Beast Points" from crowd-sourced credit, level up (Squid → Normie → Ferda Beast), and see a leaderboard. Photos auto-expire after 24h unless saved.
 
 **Stack**: Node/Express + better-sqlite3, single process serves both the API and the built React (Vite) frontend. Deployed on Render free tier. GitHub: `github.com/aidancryan55/Beast-App`. Live: `https://beast-app-0y3m.onrender.com`.
 

@@ -1,6 +1,6 @@
 {
   "appId": "com.aidanryan.beastgame",
-  "appName": "The Beast Game",
+  "appName": "Catch a Beast",
   "webDir": "dist",
   "server": {
     "url": "https://beast-app-0y3m.onrender.com",
