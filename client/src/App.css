@@ -458,8 +458,9 @@
 }
 
 .bottom-nav-icon {
-  font-size: 21px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .bottom-nav-label {
@@ -1598,6 +1599,65 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.profile-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 20px 0 8px;
+}
+
+.profile-view-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.profile-icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.profile-view-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 32px;
+  font-weight: 800;
+}
+
+.profile-view-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-view-name {
+  margin-top: 14px;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.profile-view-friends {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 14px;
 }
 
 .danger-zone {

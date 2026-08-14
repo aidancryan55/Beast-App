@@ -2,6 +2,73 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import './App.css';
 
+// Plain line icons (no emoji) for nav chrome — matches the reference app's
+// minimal SF-Symbol-style iconography instead of colorful emoji glyphs.
+const iconProps = { viewBox: '0 0 24 24', width: 20, height: 20, fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
+function IconHome(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <path d="M3 11.5 12 4l9 7.5" />
+      <path d="M5.5 10v9a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9" />
+    </svg>
+  );
+}
+function IconUsers(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20.5v-1a5 5 0 0 1 5-5h3a5 5 0 0 1 5 5v1" />
+      <path d="M16.5 4.5a3.5 3.5 0 0 1 0 6.8" />
+      <path d="M20 20.5v-1a5 5 0 0 0-3.2-4.7" />
+    </svg>
+  );
+}
+function IconUserPlus(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20.5v-1a5 5 0 0 1 5-5h3a5 5 0 0 1 5 5v1" />
+      <path d="M18.5 8v6" />
+      <path d="M21.5 11h-6" />
+    </svg>
+  );
+}
+function IconTrophy(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <path d="M8 21h8" />
+      <path d="M12 17.5v3.5" />
+      <path d="M7 4h10v4.5a5 5 0 0 1-10 0V4Z" />
+      <path d="M7 5H4.5a2 2 0 0 0 0 4H7" />
+      <path d="M17 5h2.5a2 2 0 0 1 0 4H17" />
+    </svg>
+  );
+}
+function IconUser(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21c0-4.4 3.6-7.5 8-7.5s8 3.1 8 7.5" />
+    </svg>
+  );
+}
+function IconCamera(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <path d="M4 8a2 2 0 0 1 2-2h1.2l1.3-2h6.5l1.3 2H17a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
+      <circle cx="12" cy="13" r="3.3" />
+    </svg>
+  );
+}
+function IconSettings(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.65 1.65 0 0 0-1.8-.3 1.65 1.65 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.65 1.65 0 0 0-1-1.5 1.65 1.65 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.65 1.65 0 0 0 .3-1.8 1.65 1.65 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.65 1.65 0 0 0 1.5-1 1.65 1.65 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.65 1.65 0 0 0 1.8.3H9a1.65 1.65 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.65 1.65 0 0 0 1 1.5 1.65 1.65 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.65 1.65 0 0 0-.3 1.8V9a1.65 1.65 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.65 1.65 0 0 0-1.5 1Z" />
+    </svg>
+  );
+}
+
 function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerifyCode, onSignupFinish }) {
   // 'landing' | 'signup-realname' | 'signup-username' | 'signup-avatar' | 'signup-email' | 'signup-code' | 'signup-password' | 'login'
   const [screen, setScreen] = useState('landing');
@@ -151,7 +218,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
           <p className="onboard-wordmark">THE BEAST GAME</p>
           <h1 className="onboard-question">Add a profile picture</h1>
           <button type="button" className="onboard-avatar-btn" onClick={() => avatarInputRef.current?.click()}>
-            {avatarPreview ? <img src={avatarPreview} alt="" /> : <span className="onboard-avatar-placeholder">📷</span>}
+            {avatarPreview ? <img src={avatarPreview} alt="" /> : <span className="onboard-avatar-placeholder">+</span>}
           </button>
           <input ref={avatarInputRef} type="file" accept="image/*" hidden onChange={pickAvatarFile} />
           <p className="onboard-hint">Shown next to your name on posts and the leaderboard.</p>
@@ -595,12 +662,12 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   return (
     <div className="credit-modal-backdrop" onClick={onClose}>
       <form className="credit-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h2>📸 Catch a Beast</h2>
+        <h2>Catch a Beast</h2>
 
         {!fixedGroupId && (
           <div className="destination-toggle">
-            <button type="button" className={destination === 'public' ? 'active' : ''} onClick={() => setDestination('public')}>🌎 Post publicly</button>
-            <button type="button" className={destination === 'group' ? 'active' : ''} onClick={() => setDestination('group')} disabled={!myGroups.length}>👥 Post to a group</button>
+            <button type="button" className={destination === 'public' ? 'active' : ''} onClick={() => setDestination('public')}>Post publicly</button>
+            <button type="button" className={destination === 'group' ? 'active' : ''} onClick={() => setDestination('group')} disabled={!myGroups.length}>Post to a group</button>
           </div>
         )}
         {destination === 'group' && !myGroups.length && (
@@ -617,9 +684,9 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
           </div>
         ) : (
           <div className="photo-capture-options">
-            <button type="button" className="dual-capture-btn" onClick={() => setDualCaptureOpen(true)}>📸📸 Dual Capture</button>
+            <button type="button" className="dual-capture-btn" onClick={() => setDualCaptureOpen(true)}>Dual Capture</button>
             <label className="photo-picker-fallback">
-              🖼️ Or choose a single photo
+              Or choose a single photo
               <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} hidden />
             </label>
           </div>
@@ -681,7 +748,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
               </div>
             )}
             <button type="button" className="link-btn" onClick={() => { setIsStranger(true); setSubjectUsername(''); setSubjectQuery(''); setSubjectResults([]); }}>
-              🕵️ I don't know if they have the app
+              I don't know if they have the app
             </button>
           </label>
         )}
@@ -724,7 +791,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         {destination === 'public' && (
           <label className="anon-toggle">
             <input type="checkbox" checked={isAnonymous} onChange={(e) => setIsAnonymous(e.target.checked)} />
-            🕵️ Post anonymously — hide that it was you who posted this
+            Post anonymously — hide that it was you who posted this
           </label>
         )}
 
@@ -760,7 +827,7 @@ function GiveCredit({ post, onCredit }) {
   if (!open) {
     return (
       <button type="button" className="give-credit-btn" onClick={() => setOpen(true)}>
-        {post.myCredit ? `🎁 You gave ${post.myCredit} BP` : '🎁 Give points'}
+        {post.myCredit ? `You gave ${post.myCredit} BP` : 'Give points'}
       </button>
     );
   }
@@ -794,7 +861,7 @@ function ReportButton({ post, onReport }) {
 
   if (done) return <span className="flag-done">Reported ✓</span>;
   if (!open) {
-    return <button type="button" className="flag-btn" onClick={() => setOpen(true)}>⚠️ Report</button>;
+    return <button type="button" className="flag-btn" onClick={() => setOpen(true)}>Report</button>;
   }
   return (
     <form className="report-form" onSubmit={submit}>
@@ -912,7 +979,7 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
             <ReportButton post={post} onReport={onReport} />
             {!isPoster && !post.isAnonymous && (
               <button type="button" className="flag-btn" onClick={() => onBlock(post.creditedByUsername)}>
-                🚫 Block {post.creditedByUsername}
+                Block {post.creditedByUsername}
               </button>
             )}
           </div>
@@ -1030,7 +1097,7 @@ function CreateGroupForm({ onCreate, onClose }) {
   return (
     <div className="credit-modal-backdrop" onClick={onClose}>
       <form className="credit-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h2>👥 Create a group</h2>
+        <h2>Create a group</h2>
         <label>
           Group name
           <input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sig Ep Squad" autoFocus />
@@ -1062,7 +1129,7 @@ function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSub
         <button className="friend-action remove" onClick={() => onLeave(group.id)}>Leave group</button>
       </div>
 
-      <button className="credit-friend-btn" onClick={() => setShowForm(true)}>📸 Post to {group.name}</button>
+      <button className="credit-friend-btn" onClick={() => setShowForm(true)}>Post to {group.name}</button>
       {showForm && (
         <CreatePostForm
           myGroups={[group]}
@@ -1308,7 +1375,7 @@ function DaresSection({ onSearchUsers }) {
           <h3 className="dares-sublabel">Dares waiting on you</h3>
           {pendingForMe.map((d) => (
             <div key={d.id} className="friend-row">
-              <span>{d.issuerUsername} dared you: "{d.description}" — 🎁 {d.wagerPoints} BP if you do it</span>
+              <span>{d.issuerUsername} dared you: "{d.description}" — {d.wagerPoints} BP if you do it</span>
             </div>
           ))}
         </div>
@@ -1319,7 +1386,7 @@ function DaresSection({ onSearchUsers }) {
           <h3 className="dares-sublabel">Dares you've issued</h3>
           {issuedByMe.map((d) => (
             <div key={d.id} className="friend-row">
-              <span>{d.targetUsername}: "{d.description}" — 🎁 {d.wagerPoints} BP <span className="friend-status">{d.status}</span></span>
+              <span>{d.targetUsername}: "{d.description}" — {d.wagerPoints} BP <span className="friend-status">{d.status}</span></span>
             </div>
           ))}
         </div>
@@ -1362,6 +1429,154 @@ function DaresSection({ onSearchUsers }) {
         </button>
       </form>
     </section>
+  );
+}
+
+function FriendsView({ onBack, onSearchUsers }) {
+  const [friends, setFriends] = useState(null); // null = still loading
+  const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [error, setError] = useState('');
+
+  async function refresh() {
+    const [friendList, requestData] = await Promise.all([api.getFriends(), api.getFriendRequests()]);
+    setFriends(friendList);
+    setRequests(requestData);
+  }
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function runSearch(q) {
+    setQuery(q);
+    if (q.trim().length < 1) return setResults([]);
+    setResults(await onSearchUsers(q.trim()));
+  }
+
+  async function sendRequest(username) {
+    setError('');
+    try {
+      await api.sendFriendRequest(username);
+      setQuery('');
+      setResults([]);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function respond(id, action) {
+    await api.respondToFriendRequest(id, action);
+    await refresh();
+  }
+
+  async function cancel(id) {
+    await api.cancelFriendRequest(id);
+    await refresh();
+  }
+
+  async function remove(username) {
+    await api.removeFriend(username);
+    await refresh();
+  }
+
+  if (friends === null) return null;
+
+  const friendUsernames = new Set(friends.map((f) => f.username.toLowerCase()));
+  const pendingUsernames = new Set([...requests.incoming, ...requests.outgoing].map((r) => r.username.toLowerCase()));
+
+  return (
+    <div className="memories-view">
+      <div className="memories-header">
+        <button type="button" className="memories-back" onClick={onBack} aria-label="Back">←</button>
+        <h2>Friends</h2>
+      </div>
+
+      <form className="dare-form" onSubmit={(e) => e.preventDefault()}>
+        <input
+          type="text"
+          placeholder="Search by username"
+          value={query}
+          onChange={(e) => runSearch(e.target.value)}
+        />
+        {results.length > 0 && (
+          <div className="subject-results">
+            {results.map((name) => {
+              const already = friendUsernames.has(name.toLowerCase()) || pendingUsernames.has(name.toLowerCase());
+              return (
+                <button
+                  type="button"
+                  key={name}
+                  className="subject-result"
+                  disabled={already}
+                  onClick={() => sendRequest(name)}
+                >
+                  {name} {already ? '✓' : ''}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {error && <p className="error">{error}</p>}
+      </form>
+
+      {requests.incoming.length > 0 && (
+        <section className="friend-section">
+          <h2>Requests</h2>
+          {requests.incoming.map((r) => (
+            <div key={r.id} className="friend-row">
+              <span>{r.username}</span>
+              <div className="friend-row-actions">
+                <button className="friend-action" onClick={() => respond(r.id, 'accept')}>Accept</button>
+                <button className="friend-action remove" onClick={() => respond(r.id, 'decline')}>Decline</button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {requests.outgoing.length > 0 && (
+        <section className="friend-section">
+          <h2>Sent</h2>
+          {requests.outgoing.map((r) => (
+            <div key={r.id} className="friend-row">
+              <span>{r.username} <span className="friend-status">pending</span></span>
+              <button className="friend-action" onClick={() => cancel(r.id)}>Cancel</button>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="friend-section">
+        <h2>Friends {friends.length ? `(${friends.length})` : ''}</h2>
+        {friends.length === 0 && <div className="empty-state">No friends yet — search above to add some.</div>}
+        {friends.map((f) => (
+          <div key={f.username} className="friend-row">
+            <span>{f.username}</span>
+            <button className="friend-action remove" onClick={() => remove(f.username)}>Remove</button>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpenSettings }) {
+  return (
+    <div className="profile-view">
+      <div className="profile-view-header">
+        <button type="button" className="profile-icon-btn" onClick={onOpenFriends} aria-label="Friends"><IconUserPlus /></button>
+        <button type="button" className="profile-icon-btn" onClick={onOpenSettings} aria-label="Settings"><IconSettings /></button>
+      </div>
+      <div className="profile-view-avatar">
+        {avatarUrl ? <img src={avatarUrl} alt="" /> : <span>{displayName.charAt(0).toUpperCase()}</span>}
+      </div>
+      <h1 className="profile-view-name">{displayName}</h1>
+      <p className="profile-view-friends">{friendCount} friend{friendCount === 1 ? '' : 's'}</p>
+    </div>
   );
 }
 
@@ -1438,7 +1653,7 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
 
       <div className="avatar-edit-row">
         <button type="button" className="avatar-edit-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-          {avatarUrl ? <img src={avatarUrl} alt="" /> : <span className="avatar-edit-placeholder">📷</span>}
+          {avatarUrl ? <img src={avatarUrl} alt="" /> : <span className="avatar-edit-placeholder">+</span>}
         </button>
         <div>
           <button type="button" className="link-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
@@ -1483,7 +1698,7 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
   );
 }
 
-function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, onDeleteAccount, avatarUrl, onAvatarUpdated }) {
+function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, onDeleteAccount, avatarUrl, onAvatarUpdated, onBack }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
@@ -1503,12 +1718,17 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
 
   return (
     <div className="settings-view">
+      <div className="memories-header">
+        <button type="button" className="memories-back" onClick={onBack} aria-label="Back">←</button>
+        <h2>Settings</h2>
+      </div>
+
       <EditProfileSection avatarUrl={avatarUrl} onAvatarUpdated={onAvatarUpdated} />
 
       <section className="friend-section">
         <h2>Beast Streak</h2>
         <div className="streak-summary">
-          <span className="streak-summary-current">🔥 {streak.current} day{streak.current === 1 ? '' : 's'}</span>
+          <span className="streak-summary-current">{streak.current} day{streak.current === 1 ? '' : 's'}</span>
           <span className="fineprint">Longest: {streak.longest} day{streak.longest === 1 ? '' : 's'}</span>
         </div>
         {streak.atRisk && <p className="fineprint">Your bender ends tonight if you don't post today.</p>}
@@ -1517,7 +1737,7 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
       <section className="friend-section">
         <h2>Memories</h2>
         <p className="fineprint">A private history of every beast you've photographed, past the normal 24h.</p>
-        <button type="button" className="friend-action" onClick={onOpenMemories}>📅 Open Memories</button>
+        <button type="button" className="friend-action" onClick={onOpenMemories}>Open Memories</button>
       </section>
 
       <DaresSection onSearchUsers={onSearchUsers} />
@@ -1531,7 +1751,7 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
         <section className="friend-section">
           <h2>Admin</h2>
           <button type="button" className="friend-action" onClick={onOpenAdmin}>
-            🛡️ Open moderation queue {adminReportCount ? `(${adminReportCount})` : ''}
+            Open moderation queue {adminReportCount ? `(${adminReportCount})` : ''}
           </button>
         </section>
       )}
@@ -1579,7 +1799,7 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
 }
 
 function AdminView({ reports, onResolve }) {
-  if (!reports.length) return <div className="empty-state">No pending reports. 🎉</div>;
+  if (!reports.length) return <div className="empty-state">No pending reports.</div>;
   return (
     <div className="admin-view">
       {reports.map((r) => (
@@ -1909,7 +2129,7 @@ export default function App() {
         <div className="app-user">
           {progress.streak.current > 0 && (
             <span className="streak-badge" title={`Longest: ${progress.streak.longest} days`}>
-              🔥 {progress.streak.current}
+              {progress.streak.current}d
             </span>
           )}
           <span className="app-user-avatar">
@@ -1922,7 +2142,7 @@ export default function App() {
 
       {progress.streak.atRisk && (
         <div className="streak-risk-banner">
-          🔥 Your bender ends tonight — post to keep it alive
+          Your bender ends tonight — post to keep it alive
         </div>
       )}
 
@@ -1977,6 +2197,16 @@ export default function App() {
           />
         )}
         {tab === 'leaderboard' && <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} />}
+        {tab === 'profile' && (
+          <ProfileView
+            displayName={displayName}
+            avatarUrl={auth.avatarUrl}
+            friendCount={progress.friendCount || 0}
+            onOpenFriends={() => setTab('friends')}
+            onOpenSettings={() => setTab('settings')}
+          />
+        )}
+        {tab === 'friends' && <FriendsView onBack={() => setTab('profile')} onSearchUsers={handleSearchUsers} />}
         {tab === 'settings' && (
           <SettingsView
             streak={progress.streak}
@@ -1991,6 +2221,7 @@ export default function App() {
             onDeleteAccount={handleDeleteAccount}
             avatarUrl={auth.avatarUrl}
             onAvatarUpdated={handleAvatarUpdated}
+            onBack={() => setTab('profile')}
           />
         )}
         {tab === 'admin' && isAdmin && <AdminView reports={adminReports} onResolve={handleResolveReport} />}
@@ -2004,22 +2235,22 @@ export default function App() {
 
       <nav className="bottom-nav">
         <button className={`bottom-nav-btn ${tab === 'discover' ? 'active' : ''}`} onClick={() => setTab('discover')}>
-          <span className="bottom-nav-icon">🔴</span>
+          <span className="bottom-nav-icon"><IconHome /></span>
           <span className="bottom-nav-label">BLF</span>
         </button>
         <button className={`bottom-nav-btn ${tab === 'groups' ? 'active' : ''}`} onClick={() => { setTab('groups'); setActiveGroupId(null); }}>
-          <span className="bottom-nav-icon">👥</span>
+          <span className="bottom-nav-icon"><IconUsers /></span>
           <span className="bottom-nav-label">Groups</span>
         </button>
         <button type="button" className="bottom-nav-camera" onClick={openComposer} aria-label="Post a beast">
-          📸
+          <IconCamera width={24} height={24} />
         </button>
         <button className={`bottom-nav-btn ${tab === 'leaderboard' ? 'active' : ''}`} onClick={() => setTab('leaderboard')}>
-          <span className="bottom-nav-icon">🏆</span>
+          <span className="bottom-nav-icon"><IconTrophy /></span>
           <span className="bottom-nav-label">Ranks</span>
         </button>
-        <button className={`bottom-nav-btn ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>
-          <span className="bottom-nav-icon">⚙️</span>
+        <button className={`bottom-nav-btn ${['profile', 'friends', 'settings'].includes(tab) ? 'active' : ''}`} onClick={() => setTab('profile')}>
+          <span className="bottom-nav-icon"><IconUser /></span>
           <span className="bottom-nav-label">Profile</span>
         </button>
       </nav>

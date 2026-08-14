@@ -97,6 +97,13 @@ export const api = {
   blockUser: (targetUsername) => req('/users/_/block', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
   unblockUser: (targetUsername) => req('/users/_/unblock', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
 
+  getFriends: () => req('/me/friends'),
+  getFriendRequests: () => req('/me/friend-requests'),
+  sendFriendRequest: (targetUsername) => req('/friends/request', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
+  respondToFriendRequest: (requestId, action) => req(`/friends/requests/${requestId}/respond`, { method: 'POST', body: JSON.stringify({ action }) }),
+  cancelFriendRequest: (requestId) => req(`/friends/requests/${requestId}`, { method: 'DELETE' }),
+  removeFriend: (username) => req(`/friends/${encodeURIComponent(username)}`, { method: 'DELETE' }),
+
   deleteAccount: (password) => req('/account', { method: 'DELETE', body: JSON.stringify({ password }) }),
 
   getAdminReports: () => req('/admin/reports'),

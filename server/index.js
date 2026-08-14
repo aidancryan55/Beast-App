@@ -629,7 +629,7 @@ app.post('/api/activities', requireAuth, requireVerified, (req, res) => {
 app.get('/api/users/:username/progress', (req, res) => {
   const user = getUserByUsername(req.params.username);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ ...computeUserStats(user.id), avatarUrl: user.avatar_url || null });
+  res.json({ ...computeUserStats(user.id), avatarUrl: user.avatar_url || null, friendCount: friendCount(user.id) });
 });
 
 // --- Beast Streak ---
@@ -772,6 +772,110 @@ app.post('/api/users/:username/unblock', requireAuth, (req, res) => {
   if (!target) return res.status(404).json({ error: 'That user does not exist' });
   db.prepare('DELETE FROM blocks WHERE blocker_user_id = ? AND blocked_user_id = ?').run(req.authUser.id, target.id);
   res.json({ status: 'unblocked' });
+});
+
+// --- Friends ---
+// Reuses the `friendships` table that's been in the schema since the old
+// friend-graph feature, but was unused after that feature was replaced by
+// Groups + the public Discover feed — the (requester_id, addressee_id,
+// status) shape already fits a request/accept model, so no migration needed.
+function friendRowBetween(userIdA, userIdB) {
+  return db.prepare(`
+    SELECT * FROM friendships
+    WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)
+  `).get(userIdA, userIdB, userIdB, userIdA);
+}
+function friendCount(userId) {
+  return db.prepare(`
+    SELECT COUNT(*) as n FROM friendships
+    WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)
+  `).get(userId, userId).n;
+}
+function serializeFriendUser(user) {
+  return { username: user.username, avatarUrl: user.avatar_url || null };
+}
+
+app.get('/api/me/friends', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.* FROM friendships f
+    JOIN users u ON u.id = (CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END)
+    WHERE f.status = 'accepted' AND (f.requester_id = ? OR f.addressee_id = ?)
+    ORDER BY u.username COLLATE NOCASE
+  `).all(req.authUser.id, req.authUser.id, req.authUser.id);
+  res.json(rows.map(serializeFriendUser));
+});
+
+app.get('/api/me/friend-requests', requireAuth, (req, res) => {
+  const incoming = db.prepare(`
+    SELECT f.id, u.username, u.avatar_url FROM friendships f
+    JOIN users u ON u.id = f.requester_id
+    WHERE f.addressee_id = ? AND f.status = 'pending'
+    ORDER BY f.created_at DESC
+  `).all(req.authUser.id);
+  const outgoing = db.prepare(`
+    SELECT f.id, u.username, u.avatar_url FROM friendships f
+    JOIN users u ON u.id = f.addressee_id
+    WHERE f.requester_id = ? AND f.status = 'pending'
+    ORDER BY f.created_at DESC
+  `).all(req.authUser.id);
+  res.json({
+    incoming: incoming.map((r) => ({ id: r.id, username: r.username, avatarUrl: r.avatar_url || null })),
+    outgoing: outgoing.map((r) => ({ id: r.id, username: r.username, avatarUrl: r.avatar_url || null })),
+  });
+});
+
+app.post('/api/friends/request', requireAuth, (req, res) => {
+  const target = getUserByUsername((req.body || {}).targetUsername);
+  if (!target) return res.status(404).json({ error: 'That user does not exist' });
+  if (target.id === req.authUser.id) return res.status(400).json({ error: "You can't friend yourself" });
+  if (isBlocked(req.authUser.id, target.id)) return res.status(403).json({ error: "You can't friend this person" });
+
+  const existing = friendRowBetween(req.authUser.id, target.id);
+  if (existing) {
+    if (existing.status === 'accepted') return res.status(400).json({ error: 'Already friends' });
+    if (existing.requester_id === req.authUser.id) return res.status(400).json({ error: 'Request already sent' });
+    // They already sent one your way — this makes it mutual, so just accept it.
+    db.prepare(`UPDATE friendships SET status = 'accepted' WHERE id = ?`).run(existing.id);
+    return res.json({ status: 'accepted' });
+  }
+
+  db.prepare(`INSERT INTO friendships (requester_id, addressee_id, status) VALUES (?, ?, 'pending')`).run(req.authUser.id, target.id);
+  res.status(201).json({ status: 'requested' });
+});
+
+app.post('/api/friends/requests/:id/respond', requireAuth, (req, res) => {
+  const request = db.prepare('SELECT * FROM friendships WHERE id = ?').get(req.params.id);
+  if (!request || request.addressee_id !== req.authUser.id || request.status !== 'pending') {
+    return res.status(404).json({ error: 'Request not found' });
+  }
+  const action = (req.body || {}).action;
+  if (action === 'accept') {
+    db.prepare(`UPDATE friendships SET status = 'accepted' WHERE id = ?`).run(request.id);
+    return res.json({ status: 'accepted' });
+  }
+  if (action === 'decline') {
+    db.prepare('DELETE FROM friendships WHERE id = ?').run(request.id);
+    return res.json({ status: 'declined' });
+  }
+  res.status(400).json({ error: "action must be 'accept' or 'decline'" });
+});
+
+app.delete('/api/friends/requests/:id', requireAuth, (req, res) => {
+  const request = db.prepare('SELECT * FROM friendships WHERE id = ?').get(req.params.id);
+  if (!request || request.requester_id !== req.authUser.id || request.status !== 'pending') {
+    return res.status(404).json({ error: 'Request not found' });
+  }
+  db.prepare('DELETE FROM friendships WHERE id = ?').run(request.id);
+  res.json({ status: 'cancelled' });
+});
+
+app.delete('/api/friends/:username', requireAuth, (req, res) => {
+  const target = getUserByUsername(req.params.username);
+  if (!target) return res.status(404).json({ error: 'That user does not exist' });
+  const existing = friendRowBetween(req.authUser.id, target.id);
+  if (!existing || existing.status !== 'accepted') return res.status(404).json({ error: 'Not friends' });
+  db.prepare('DELETE FROM friendships WHERE id = ?').run(existing.id);
+  res.json({ status: 'removed' });
 });
 
 // --- Groups ---
