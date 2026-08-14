@@ -53,7 +53,6 @@ export const api = {
   getLeaderboard: () => req('/leaderboard'),
 
   searchUsers: (displayName, q) => req(`/users/${encodeURIComponent(displayName)}/search?q=${encodeURIComponent(q)}`),
-  getRandomBeast: () => req('/me/random-beast'),
   getDiscover: (displayName) => req(`/users/${encodeURIComponent(displayName)}/discover`),
 
   getGroups: (displayName) => req(`/users/${encodeURIComponent(displayName)}/groups`),

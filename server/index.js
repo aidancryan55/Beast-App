@@ -696,20 +696,6 @@ app.get('/api/users/:username/search', (req, res) => {
   res.json(results);
 });
 
-// "Tag a random beast" — for the public composer, when you don't have a
-// specific person in mind. Excludes yourself, unverified accounts, banned
-// accounts, and anyone blocked in either direction (same exclusion set as
-// getHiddenUserIds elsewhere).
-app.get('/api/me/random-beast', requireAuth, (req, res) => {
-  const hidden = new Set(getHiddenUserIds(req.authUser.id));
-  hidden.add(req.authUser.id);
-  const rows = db.prepare(`SELECT id, username FROM users WHERE banned = 0 AND email_verified = 1 AND password_hash IS NOT NULL`).all();
-  const pool = rows.filter((u) => !hidden.has(u.id));
-  if (!pool.length) return res.status(404).json({ error: 'No one else to tag yet' });
-  const pick = pool[Math.floor(Math.random() * pool.length)];
-  res.json({ username: pick.username });
-});
-
 // --- Blocking ---
 app.get('/api/users/:username/blocked', requireAuth, (req, res) => {
   const rows = db.prepare(`

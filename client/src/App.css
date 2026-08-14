@@ -703,22 +703,6 @@
   min-width: 0;
 }
 
-.random-beast-btn {
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.random-beast-btn:disabled {
-  opacity: 0.4;
-}
-
 .photo-picker {
   display: flex;
   align-items: center;
