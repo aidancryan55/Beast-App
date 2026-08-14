@@ -3,10 +3,12 @@ import { api } from './api';
 import './App.css';
 
 function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerifyCode, onSignupFinish }) {
-  // 'landing' | 'signup-realname' | 'signup-username' | 'signup-email' | 'signup-code' | 'signup-password' | 'login'
+  // 'landing' | 'signup-realname' | 'signup-username' | 'signup-avatar' | 'signup-email' | 'signup-code' | 'signup-password' | 'login'
   const [screen, setScreen] = useState('landing');
   const [realName, setRealName] = useState('');
   const [username, setUsername] = useState('');
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarPreview, setAvatarPreview] = useState('');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -14,6 +16,14 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
   const [errorCode, setErrorCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const avatarInputRef = useRef(null);
+
+  function pickAvatarFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
+  }
 
   useEffect(() => {
     const t = setInterval(() => setResendCooldown((s) => (s > 0 ? s - 1 : 0)), 1000);
@@ -80,7 +90,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
     setError('');
     setLoading(true);
     try {
-      await onSignupFinish(email.trim(), password);
+      await onSignupFinish(email.trim(), password, avatarFile);
       // Success logs you straight in — the parent swaps this screen out.
     } catch (err) {
       setError(err.message);
@@ -115,7 +125,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
     return (
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => setScreen('signup-realname')} aria-label="Back">‹</button>
-        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (username.trim()) setScreen('signup-email'); }}>
+        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (username.trim()) setScreen('signup-avatar'); }}>
           <p className="onboard-wordmark">THE BEAST GAME</p>
           <h1 className="onboard-question">Next, create your username</h1>
           <input
@@ -133,10 +143,28 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
     );
   }
 
-  if (screen === 'signup-email') {
+  if (screen === 'signup-avatar') {
     return (
       <div className="onboard-screen">
         <button type="button" className="onboard-back" onClick={() => setScreen('signup-username')} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); setScreen('signup-email'); }}>
+          <p className="onboard-wordmark">THE BEAST GAME</p>
+          <h1 className="onboard-question">Add a profile picture</h1>
+          <button type="button" className="onboard-avatar-btn" onClick={() => avatarInputRef.current?.click()}>
+            {avatarPreview ? <img src={avatarPreview} alt="" /> : <span className="onboard-avatar-placeholder">📷</span>}
+          </button>
+          <input ref={avatarInputRef} type="file" accept="image/*" hidden onChange={pickAvatarFile} />
+          <p className="onboard-hint">Shown next to your name on posts and the leaderboard.</p>
+          <button type="submit" className="onboard-continue">{avatarFile ? 'Continue' : 'Skip for now'}</button>
+        </form>
+      </div>
+    );
+  }
+
+  if (screen === 'signup-email') {
+    return (
+      <div className="onboard-screen">
+        <button type="button" className="onboard-back" onClick={() => setScreen('signup-avatar')} aria-label="Back">‹</button>
         <form className="onboard-body" onSubmit={submitEmail}>
           <p className="onboard-wordmark">THE BEAST GAME</p>
           <h1 className="onboard-question">What's your email?</h1>
@@ -1629,14 +1657,6 @@ export default function App() {
     return api.signupVerifyCode(email, code);
   }
 
-  async function handleSignupFinish(email, password) {
-    const result = await api.signupFinish(email, password);
-    api.setToken(result.token);
-    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin, avatarUrl: result.avatarUrl || null };
-    localStorage.setItem('ccq_auth', JSON.stringify(authData));
-    setAuth(authData);
-  }
-
   function handleAvatarUpdated(avatarUrl) {
     setAuth((prev) => {
       if (!prev) return prev;
@@ -1644,6 +1664,25 @@ export default function App() {
       localStorage.setItem('ccq_auth', JSON.stringify(next));
       return next;
     });
+  }
+
+  async function handleSignupFinish(email, password, avatarFile) {
+    const result = await api.signupFinish(email, password);
+    api.setToken(result.token);
+    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin, avatarUrl: result.avatarUrl || null };
+    localStorage.setItem('ccq_auth', JSON.stringify(authData));
+    setAuth(authData);
+
+    if (avatarFile) {
+      // Best-effort — the account is already created at this point, so a
+      // failed upload here shouldn't block login. They can retry from Profile.
+      try {
+        const { avatarUrl } = await api.uploadAvatar(avatarFile);
+        handleAvatarUpdated(avatarUrl);
+      } catch {
+        // ignore
+      }
+    }
   }
 
   async function logout() {
@@ -1866,13 +1905,16 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="app-title">🎓 The Beast Game</div>
+        <div className="app-title">The Beast Game</div>
         <div className="app-user">
           {progress.streak.current > 0 && (
             <span className="streak-badge" title={`Longest: ${progress.streak.longest} days`}>
               🔥 {progress.streak.current}
             </span>
           )}
+          <span className="app-user-avatar">
+            {auth.avatarUrl ? <img src={auth.avatarUrl} alt="" /> : displayName.charAt(0).toUpperCase()}
+          </span>
           <span>{displayName}</span>
           <button className="logout-btn" onClick={logout}>Log out</button>
         </div>

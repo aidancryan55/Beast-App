@@ -230,6 +230,31 @@
   border-bottom-color: var(--primary);
 }
 
+.onboard-avatar-btn {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  align-self: flex-start;
+}
+
+.onboard-avatar-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.onboard-avatar-placeholder {
+  font-size: 32px;
+  opacity: 0.6;
+}
+
 .onboard-hint {
   margin-top: 16px;
   font-size: 13px;
@@ -310,6 +335,27 @@
   align-items: center;
   gap: 10px;
   font-weight: 600;
+}
+
+.app-user-avatar {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.app-user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .logout-btn {

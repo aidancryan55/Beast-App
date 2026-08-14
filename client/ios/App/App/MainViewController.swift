@@ -9,6 +9,10 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         webView?.uiDelegate = self
+        // Kill the native rubber-band overscroll — content still scrolls
+        // normally when it's taller than the screen, this just removes the
+        // elastic "give" past the top/bottom edges.
+        webView?.scrollView.bounces = false
     }
 
     func webView(
