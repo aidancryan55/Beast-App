@@ -551,6 +551,7 @@ app.get('/api/me/memories', requireAuth, (req, res) => {
     photoUrl: r.photo_url || `/uploads/${r.photo_filename}`,
     caption: r.caption,
     subjectUsername: r.subject_username,
+    subjectDisplayName: r.subject_display_name || null,
     activityName: r.activity_name || null,
     activityIcon: r.activity_icon || null,
   }));
@@ -798,9 +799,12 @@ function serializePost(row, viewerUserId) {
   const myCredit = viewerUserId
     ? db.prepare('SELECT points FROM post_credits WHERE post_id = ? AND awarder_user_id = ?').get(row.id, viewerUserId)
     : null;
-  const maxCredit = viewerUserId
-    ? Math.max(0, Math.min(maxCreditFor(), creditBudgetFor(row.subject_user_id, viewerUserId, row.id)))
-    : maxCreditFor();
+  const isStranger = !!row.subject_display_name;
+  const maxCredit = isStranger
+    ? maxCreditFor()
+    : viewerUserId
+      ? Math.max(0, Math.min(maxCreditFor(), creditBudgetFor(row.subject_user_id, viewerUserId, row.id)))
+      : maxCreditFor();
   const createdAtMs = Date.parse(`${row.created_at.replace(' ', 'T')}Z`);
   const expired = !row.saved && Date.now() - createdAtMs > POST_EXPIRY_MS;
 
@@ -809,6 +813,7 @@ function serializePost(row, viewerUserId) {
   return {
     id: row.id,
     subjectUsername: row.subject_username,
+    subjectDisplayName: row.subject_display_name || null,
     creditedByUsername: isAnonymous ? 'Anonymous' : row.credited_by_username,
     isAnonymous,
     activityKey: row.activity_key || null,
@@ -847,30 +852,51 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
     return res.status(status).json({ error });
   };
 
-  const subject = getUserByUsername(body.subjectUsername);
-  if (!subject) return fail(404, 'That person does not exist');
-  if (subject.id === creditedBy.id) return fail(400, "You can't credit yourself");
+  // "Random stranger" mode: no real account behind the subject, just a
+  // free-text name/description — for catching someone who may not even
+  // have the app. Only makes sense on the public feed; group posts need a
+  // real member since the group itself is a list of real accounts.
+  const strangerName = ((body.subjectDisplayName || '').trim()).slice(0, 60);
+  const isStranger = !!strangerName;
+  if (isStranger && visibility === 'group') return fail(400, 'Group posts need a real member tagged, not a stranger');
+  if (isStranger && containsBlockedContent(strangerName)) return fail(400, "That name isn't allowed.");
+
+  let subject;
+  if (isStranger) {
+    subject = creditedBy; // placeholder to satisfy subject_user_id NOT NULL — never a real recipient, see subject_display_name
+  } else {
+    subject = getUserByUsername(body.subjectUsername);
+    if (!subject) return fail(404, 'That person does not exist');
+    if (subject.id === creditedBy.id) return fail(400, "You can't credit yourself");
+  }
   if (!mainFile) return fail(400, 'A photo is required');
   if (containsBlockedContent(body.caption)) return fail(400, 'That caption isn\'t allowed.');
-  if (isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
+  if (!isStranger && isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
 
   // Poster-chosen starter award (1-100), gated by the same lifetime
   // MAX_CREDIT_PER_CONTRIBUTOR cap as crowd credit — that cap is what keeps
   // this from being a farming hole now that it's no longer a fixed amount.
-  const points = parseInt(body.points, 10);
-  const budget = creditBudgetFor(subject.id, creditedBy.id, null);
-  if (budget <= 0) {
-    return fail(400, `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points`);
-  }
-  const maxPoints = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
-  if (!Number.isInteger(points) || points < 1 || points > maxPoints) {
-    return fail(400, `Points must be between 1 and ${maxPoints}`);
+  // Stranger posts skip this entirely: there's no real account to award
+  // points to, and letting the poster claim them instead would reopen the
+  // exact self-farming hole this whole design exists to close.
+  let points = 0;
+  if (!isStranger) {
+    points = parseInt(body.points, 10);
+    const budget = creditBudgetFor(subject.id, creditedBy.id, null);
+    if (budget <= 0) {
+      return fail(400, `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points`);
+    }
+    const maxPoints = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
+    if (!Number.isInteger(points) || points < 1 || points > maxPoints) {
+      return fail(400, `Points must be between 1 and ${maxPoints}`);
+    }
   }
 
   // Optional: this post fulfills a pending dare. The subject of the post
-  // (who's actually in the photo) must be who the dare targeted.
+  // (who's actually in the photo) must be who the dare targeted — not
+  // possible for a stranger post since there's no real target to match.
   let dare = null;
-  if (body.dareId) {
+  if (body.dareId && !isStranger) {
     dare = db.prepare('SELECT * FROM dares WHERE id = ?').get(body.dareId);
     if (!dare) return fail(404, 'Dare not found');
     if (dare.status !== 'pending') return fail(400, 'That dare was already completed');
@@ -896,9 +922,9 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
   const isAnonymous = visibility === 'public' && body.isAnonymous === 'true';
 
   const info = db.prepare(`
-    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, inset_photo_filename, caption, is_anonymous)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, mainFile.filename, insetFile ? insetFile.filename : null, body.caption || null, isAnonymous ? 1 : 0);
+    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, inset_photo_filename, subject_display_name, caption, is_anonymous)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, mainFile.filename, insetFile ? insetFile.filename : null, isStranger ? strangerName : null, body.caption || null, isAnonymous ? 1 : 0);
 
   // Mirror the photo(s) into durable storage so they can survive the 24h
   // expiry cleanup for Memories — see uploadPhotoToR2's dev-fallback comment.
@@ -916,10 +942,13 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
 
   // Stored as a post_credits row (awarder = poster) so existing per-post
   // display logic (creditorCount, card totals) needs no rework, and
-  // mirrored into the durable ledger so it survives expiry.
-  db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)')
-    .run(info.lastInsertRowid, creditedBy.id, points);
-  writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
+  // mirrored into the durable ledger so it survives expiry. Skipped for
+  // stranger posts — no real recipient, see the isStranger check above.
+  if (!isStranger) {
+    db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)')
+      .run(info.lastInsertRowid, creditedBy.id, points);
+    writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
+  }
 
   updateStreakOnPost(creditedBy.id);
 
@@ -953,12 +982,23 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
     return res.status(403).json({ error: "You're not in that group" });
   }
 
+  // "Random stranger" posts (see subject_display_name) have no real account
+  // behind the subject — subject_user_id is just the poster's own id, a
+  // placeholder. Crediting one still bumps the post's own displayed total
+  // (people can throw points at it for fun), but skips the lifetime-budget
+  // check and the ledger write entirely, since there's no real recipient
+  // for those points to land on. Writing them to subject_user_id's ledger
+  // would silently hand the poster free points for tagging a made-up name.
+  const isStranger = !!post.subject_display_name;
   const points = parseInt((req.body || {}).points, 10);
-  const budget = creditBudgetFor(post.subject_user_id, user.id, post.id);
-  if (budget <= 0) {
-    return res.status(400).json({ error: `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points` });
+  let max = maxCreditFor();
+  if (!isStranger) {
+    const budget = creditBudgetFor(post.subject_user_id, user.id, post.id);
+    if (budget <= 0) {
+      return res.status(400).json({ error: `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points` });
+    }
+    max = Math.min(max, budget);
   }
-  const max = Math.min(maxCreditFor(), budget);
   if (!Number.isInteger(points) || points < 1 || points > max) {
     return res.status(400).json({ error: `Points must be between 1 and ${max}` });
   }
@@ -967,7 +1007,9 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
     INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)
     ON CONFLICT(post_id, awarder_user_id) DO UPDATE SET points = excluded.points
   `).run(post.id, user.id, points);
-  writeLedgerEntry(post.subject_user_id, points, 'crowd_credit', post.id, user.id);
+  if (!isStranger) {
+    writeLedgerEntry(post.subject_user_id, points, 'crowd_credit', post.id, user.id);
+  }
 
   res.json(serializePost(getPostRow(post.id), user.id));
 });
@@ -1119,7 +1161,7 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
   const rows = db.prepare(`
     SELECT r.id, r.reason, r.status, r.created_at,
            reporter.username as reporter_username,
-           p.id as post_id, p.photo_filename, p.photo_url, p.caption, p.visibility,
+           p.id as post_id, p.photo_filename, p.photo_url, p.caption, p.visibility, p.subject_display_name,
            su.username as subject_username, cu.username as credited_by_username
     FROM reports r
     JOIN users reporter ON reporter.id = r.reporter_user_id
@@ -1140,6 +1182,7 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
     caption: r.caption,
     visibility: r.visibility,
     subjectUsername: r.subject_username,
+    subjectDisplayName: r.subject_display_name || null,
     creditedByUsername: r.credited_by_username,
   })));
 });

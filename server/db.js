@@ -75,6 +75,7 @@ db.exec(`
     photo_url TEXT,
     inset_photo_filename TEXT,
     inset_photo_url TEXT,
+    subject_display_name TEXT,
     caption TEXT,
     saved INTEGER NOT NULL DEFAULT 0,
     is_anonymous INTEGER NOT NULL DEFAULT 0,
@@ -285,6 +286,14 @@ if (postCols.length) {
   }
   if (!postCols.includes('inset_photo_url')) {
     db.exec('ALTER TABLE posts ADD COLUMN inset_photo_url TEXT');
+  }
+  // "Random stranger" posts — no real account behind the subject, so
+  // subject_user_id is set to the poster's own id (satisfies the NOT NULL
+  // constraint without a migration) and this column carries the free-text
+  // name/description instead. Its presence is what marks a post as one of
+  // these — see every subject_display_name check in index.js.
+  if (!postCols.includes('subject_display_name')) {
+    db.exec('ALTER TABLE posts ADD COLUMN subject_display_name TEXT');
   }
   // Old posts stored a single fixed `points` value with no post_credits row.
   // Backfill one post_credits row per legacy post so totals still add up under the new model.

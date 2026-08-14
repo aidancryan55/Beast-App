@@ -299,6 +299,8 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const [subjectUsername, setSubjectUsername] = useState('');
   const [subjectQuery, setSubjectQuery] = useState('');
   const [subjectResults, setSubjectResults] = useState([]);
+  const [isStranger, setIsStranger] = useState(false);
+  const [strangerName, setStrangerName] = useState('');
   const [customActivity, setCustomActivity] = useState('');
   const [points, setPoints] = useState(10);
   const [caption, setCaption] = useState('');
@@ -369,11 +371,18 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   async function submit(e) {
     e.preventDefault();
     if (!photo) return setError('Add a photo first');
-    if (!subjectUsername) return setError(destination === 'group' ? 'Pick who to credit' : 'Search for who to credit');
+    if (isStranger) {
+      if (!strangerName.trim()) return setError('Give them a name or description');
+    } else {
+      if (!subjectUsername) return setError(destination === 'group' ? 'Pick who to credit' : 'Search for who to credit');
+    }
     if (destination === 'group' && !groupId) return setError('Pick a group');
-    const pointsNum = Number(points);
-    if (!Number.isInteger(pointsNum) || pointsNum < 1 || pointsNum > 100) {
-      return setError('Beast Points must be between 1 and 100');
+    let pointsNum = 0;
+    if (!isStranger) {
+      pointsNum = Number(points);
+      if (!Number.isInteger(pointsNum) || pointsNum < 1 || pointsNum > 100) {
+        return setError('Beast Points must be between 1 and 100');
+      }
     }
     setError('');
     setSubmitting(true);
@@ -384,7 +393,8 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         finalActivityKey = created.key;
       }
       await onSubmit({
-        subjectUsername,
+        subjectUsername: isStranger ? '' : subjectUsername,
+        subjectDisplayName: isStranger ? strangerName.trim() : '',
         activityKey: finalActivityKey,
         caption,
         photo,
@@ -456,6 +466,21 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
               </div>
             </label>
           </>
+        ) : isStranger ? (
+          <label>
+            Who's the beast?
+            <input
+              type="text"
+              maxLength={60}
+              placeholder="e.g. guy in the red hat"
+              value={strangerName}
+              onChange={(e) => setStrangerName(e.target.value)}
+              autoFocus
+            />
+            <button type="button" className="link-btn" onClick={() => { setIsStranger(false); setStrangerName(''); }}>
+              Actually, I know their username
+            </button>
+          </label>
         ) : (
           <label>
             Who's the beast?
@@ -477,6 +502,9 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
                 ))}
               </div>
             )}
+            <button type="button" className="link-btn" onClick={() => { setIsStranger(true); setSubjectUsername(''); setSubjectQuery(''); setSubjectResults([]); }}>
+              🕵️ I don't know if they have the app
+            </button>
           </label>
         )}
 
@@ -491,17 +519,24 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
           />
         </label>
 
-        <label>
-          Beast Points to give (1-100)
-          <input
-            type="number"
-            min="1"
-            max="100"
-            value={points}
-            onChange={(e) => setPoints(e.target.value)}
-          />
-        </label>
-        <p className="fineprint">Everyone else who sees the post can chip in more on top of this.</p>
+        {!isStranger && (
+          <>
+            <label>
+              Beast Points to give (1-100)
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={points}
+                onChange={(e) => setPoints(e.target.value)}
+              />
+            </label>
+            <p className="fineprint">Everyone else who sees the post can chip in more on top of this.</p>
+          </>
+        )}
+        {isStranger && (
+          <p className="fineprint">No account, no points — this is just for the feed. Others can still throw points at the post for fun, but they won't count toward anyone's real score.</p>
+        )}
 
         <label>
           Caption (optional)
@@ -683,7 +718,7 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
           <div className="post-head-line">
             <strong className={post.isAnonymous ? 'anon-name' : ''}>{posterName}</strong>
             <span className="post-head-arrow">caught</span>
-            <strong>{post.subjectUsername}</strong>
+            <strong>{post.subjectDisplayName || post.subjectUsername}</strong>
           </div>
           <div className="post-head-meta">
             {post.visibility === 'group' ? post.groupName : 'Public'}
@@ -1243,7 +1278,7 @@ function AdminView({ reports, onResolve }) {
       {reports.map((r) => (
         <div key={r.id} className="admin-report-card">
           <img className="post-photo" src={r.photoUrl} alt="" />
-          <p><strong>{r.subjectUsername}</strong> caught by <strong>{r.creditedByUsername}</strong> <span className={`post-visibility ${r.visibility}`}>{r.visibility}</span></p>
+          <p><strong>{r.subjectDisplayName || r.subjectUsername}</strong> caught by <strong>{r.creditedByUsername}</strong> <span className={`post-visibility ${r.visibility}`}>{r.visibility}</span></p>
           {r.caption && <p className="post-caption">{r.caption}</p>}
           <p className="fineprint">Reported by {r.reporterUsername}: "{r.reason}"</p>
           <div className="credit-modal-actions">
@@ -1373,9 +1408,9 @@ export default function App() {
     await Promise.all(jobs);
   }
 
-  async function handleSubmitPost({ subjectUsername, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous }) {
+  async function handleSubmitPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous }) {
     await withAuthGuard(async () => {
-      await api.createPost({ subjectUsername, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous });
+      await api.createPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous });
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);
