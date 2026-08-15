@@ -1995,6 +1995,7 @@ export default function App() {
   const [memories, setMemories] = useState([]);
   const [tab, setTab] = useState('discover');
   const [showComposer, setShowComposer] = useState(false);
+  const [transitionStyle, setTransitionStyle] = useState('t-fadeup'); // TEMP: transition A/B test, remove after picking one
   const [loadError, setLoadError] = useState('');
 
   function openComposer() {
@@ -2303,8 +2304,16 @@ export default function App() {
         </div>
       )}
 
+      <div className="transition-picker">
+        {['t-fadeup', 't-crossfade', 't-slideright', 't-scale'].map((t) => (
+          <button key={t} type="button" className={transitionStyle === t ? 'active' : ''} onClick={() => setTransitionStyle(t)}>
+            {t.replace('t-', '')}
+          </button>
+        ))}
+      </div>
+
       <main className="app-main">
-        <div key={tab === 'groups' ? `groups-${activeGroupId || 'list'}` : tab} className="app-main-content">
+        <div key={tab === 'groups' ? `groups-${activeGroupId || 'list'}` : tab} className={`app-main-content ${transitionStyle}`}>
         {tab === 'discover' && (
           <DiscoverView
             discoverFeed={discoverFeed}

@@ -331,6 +331,66 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* --- Transition A/B test candidates (temporary, for comparison) --- */
+.app-main-content.t-fadeup {
+  animation: tFadeUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes tFadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.app-main-content.t-crossfade {
+  animation: tCrossfade 0.15s ease-out;
+}
+@keyframes tCrossfade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.app-main-content.t-slideright {
+  animation: tSlideRight 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes tSlideRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.app-main-content.t-scale {
+  animation: tScale 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes tScale {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.transition-picker {
+  flex-shrink: 0;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+
+.transition-picker button {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.transition-picker button.active {
+  background: var(--primary);
+  color: var(--primary-contrast);
+}
+
 @keyframes popoverIn {
   from { opacity: 0; transform: translateY(-4px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
