@@ -107,7 +107,6 @@ function generateEmailCode() {
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM || 'Catch a Beast <onboarding@resend.dev>';
-const APP_URL = process.env.APP_URL || `http://localhost:${process.env.PORT || 4001}`;
 
 async function sendVerificationCode(email, code) {
   if (!RESEND_API_KEY) {
