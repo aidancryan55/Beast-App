@@ -2384,11 +2384,11 @@ export default function App() {
         {tab === 'admin' && isAdmin && <AdminView reports={adminReports} onResolve={handleResolveReport} />}
         {tab === 'memories' && <MemoriesView memories={memories} onBack={() => setTab('settings')} />}
         </div>
-      </main>
 
-      <footer className="app-footer">
-        Everything here is for laughs. Nothing in this app encourages alcohol use — party-related activities are about the memory, not the drink, and any references are intended for those of legal drinking age only.
-      </footer>
+        <footer className="app-footer">
+          Everything here is for laughs. Nothing in this app encourages alcohol use — party-related activities are about the memory, not the drink, and any references are intended for those of legal drinking age only.
+        </footer>
+      </main>
 
       <nav className="bottom-nav">
         <button className={`bottom-nav-btn ${tab === 'discover' ? 'active' : ''}`} onClick={() => setTab('discover')}>
