@@ -949,13 +949,6 @@ app.post('/api/groups', requireAuth, async (req, res) => {
   res.status(201).json(serializeGroup(group, req.authUser.id));
 });
 
-app.get('/api/groups/:groupId', (req, res) => {
-  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
-  if (!group) return res.status(404).json({ error: 'Group not found' });
-  const viewer = getUserByUsername((req.query.viewerUsername || ''));
-  res.json(serializeGroup(group, viewer ? viewer.id : null));
-});
-
 // Three ways in, depending on how the group was set up:
 //  - public: joins immediately, no barrier.
 //  - private + password set: joins immediately if the password matches.

@@ -68,7 +68,6 @@ export const api = {
   discoverGroups: (displayName, q = '') => req(`/users/${encodeURIComponent(displayName)}/groups/discover?q=${encodeURIComponent(q)}`),
   createGroup: (name, description, visibility, password) =>
     req('/groups', { method: 'POST', body: JSON.stringify({ name, description, visibility, password }) }),
-  getGroup: (groupId, viewerDisplayName) => req(`/groups/${groupId}?viewerUsername=${encodeURIComponent(viewerDisplayName)}`),
   joinGroup: (groupId, password) => req(`/groups/${groupId}/join`, { method: 'POST', body: JSON.stringify({ password }) }),
   cancelGroupRequest: (groupId) => req(`/groups/${groupId}/request`, { method: 'DELETE' }),
   getGroupRequests: (groupId) => req(`/groups/${groupId}/requests`),
