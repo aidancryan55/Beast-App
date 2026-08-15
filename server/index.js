@@ -1131,28 +1131,41 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
   } else {
     subject = getUserByUsername(body.subjectUsername);
     if (!subject) return fail(404, 'That person does not exist');
-    if (subject.id === creditedBy.id) return fail(400, "You can't credit yourself");
+    // Self-tagging is only allowed inside groups — a small trusted circle,
+    // and the starter points below are display-only there (never written to
+    // the ledger) specifically so this can't be used to farm real points.
+    if (subject.id === creditedBy.id && visibility !== 'group') return fail(400, "You can't credit yourself");
   }
+  const isSelfPost = !isStranger && subject.id === creditedBy.id;
   if (!mainFile) return fail(400, 'A photo is required');
   if (containsBlockedContent(body.caption)) return fail(400, 'That caption isn\'t allowed.');
-  if (!isStranger && isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
+  if (!isStranger && !isSelfPost && isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
 
   // Poster-chosen starter award (1-100), gated by the same lifetime
   // MAX_CREDIT_PER_CONTRIBUTOR cap as crowd credit — that cap is what keeps
   // this from being a farming hole now that it's no longer a fixed amount.
   // Stranger posts skip this entirely: there's no real account to award
   // points to, and letting the poster claim them instead would reopen the
-  // exact self-farming hole this whole design exists to close.
+  // exact self-farming hole this whole design exists to close. Self-posts
+  // (group-only) DO get a poster-chosen starter number — it shows on the
+  // card — but it's never written to the ledger (see below), so it can't
+  // inflate the poster's real total; only other members' crowd credit does.
   let points = 0;
   if (!isStranger) {
     points = parseInt(body.points, 10);
-    const budget = creditBudgetFor(subject.id, creditedBy.id, null);
-    if (budget <= 0) {
-      return fail(400, `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points`);
-    }
-    const maxPoints = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
-    if (!Number.isInteger(points) || points < 1 || points > maxPoints) {
-      return fail(400, `Points must be between 1 and ${maxPoints}`);
+    if (isSelfPost) {
+      if (!Number.isInteger(points) || points < 1 || points > MAX_CREDIT_PER_CONTRIBUTOR) {
+        return fail(400, `Points must be between 1 and ${MAX_CREDIT_PER_CONTRIBUTOR}`);
+      }
+    } else {
+      const budget = creditBudgetFor(subject.id, creditedBy.id, null);
+      if (budget <= 0) {
+        return fail(400, `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points`);
+      }
+      const maxPoints = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
+      if (!Number.isInteger(points) || points < 1 || points > maxPoints) {
+        return fail(400, `Points must be between 1 and ${maxPoints}`);
+      }
     }
   }
 
@@ -1206,12 +1219,18 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
 
   // Stored as a post_credits row (awarder = poster) so existing per-post
   // display logic (creditorCount, card totals) needs no rework, and
-  // mirrored into the durable ledger so it survives expiry. Skipped for
-  // stranger posts — no real recipient, see the isStranger check above.
+  // mirrored into the durable ledger so it survives expiry. Skipped
+  // entirely for stranger posts — no real recipient, see the isStranger
+  // check above. For self-posts the post_credits row still lands (so the
+  // card shows the starter number), but the ledger write is skipped — the
+  // whole point of self-posts being display-only for the poster's own
+  // starter amount; only other members' later crowd credit is real.
   if (!isStranger) {
     db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)')
       .run(info.lastInsertRowid, creditedBy.id, points);
-    writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
+    if (!isSelfPost) {
+      writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
+    }
   }
 
   updateStreakOnPost(creditedBy.id);

@@ -580,6 +580,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
 
   const selectedGroup = myGroups.find((g) => g.id === Number(groupId));
   const groupMembers = (selectedGroup?.members || []).filter((m) => m.toLowerCase() !== currentUsername.toLowerCase());
+  const isSelfPost = destination === 'group' && !!subjectUsername && subjectUsername.toLowerCase() === currentUsername.toLowerCase();
 
   async function runSubjectSearch(q) {
     setSubjectQuery(q);
@@ -707,9 +708,13 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
               <div className="subject-row">
                 <select value={subjectUsername} onChange={(e) => setSubjectUsername(e.target.value)}>
                   <option value="">Pick a member</option>
+                  <option value={currentUsername}>Yourself</option>
                   {groupMembers.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
+              {isSelfPost && (
+                <p className="fineprint">Posting about yourself — the points you set below just show on the card, they don't count toward your real total. Only points other members give you for real do.</p>
+              )}
             </label>
           </>
         ) : isStranger ? (
