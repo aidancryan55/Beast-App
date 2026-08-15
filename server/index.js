@@ -414,6 +414,19 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts — try again in a bit.' },
 });
 
+// Lets the signup wizard flag a taken username right on the username step,
+// instead of the user only finding out after also typing their email (that
+// error used to surface confusingly on the email screen since /signup/start
+// was the only place username uniqueness got checked). Read-only, no auth
+// needed — username availability isn't sensitive info, it's already public
+// on posts/leaderboard.
+app.get('/api/username-available', (req, res) => {
+  const username = ((req.query.username || '') + '').trim();
+  if (!username || !DISPLAY_NAME_RE.test(username)) return res.json({ available: false });
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  res.json({ available: !existing });
+});
+
 // Signup is a 4-step wizard (real name -> username -> email -> verify code
 // -> password), matching the client's onboarding screens one for one. Each
 // step below is its own request rather than one big /api/signup call.

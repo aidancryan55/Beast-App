@@ -112,6 +112,25 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
     }
   }
 
+  async function submitUsername(e) {
+    e.preventDefault();
+    if (!username.trim()) return;
+    setError('');
+    setLoading(true);
+    try {
+      const { available } = await api.checkUsernameAvailable(username.trim());
+      if (!available) {
+        setError('That username is taken.');
+        return;
+      }
+      setScreen('signup-avatar');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function submitEmail(e) {
     e.preventDefault();
     setError('');
@@ -191,8 +210,8 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
   if (screen === 'signup-username') {
     return (
       <div className="onboard-screen">
-        <button type="button" className="onboard-back" onClick={() => setScreen('signup-realname')} aria-label="Back">‹</button>
-        <form className="onboard-body" onSubmit={(e) => { e.preventDefault(); if (username.trim()) setScreen('signup-avatar'); }}>
+        <button type="button" className="onboard-back" onClick={() => { setError(''); setScreen('signup-realname'); }} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={submitUsername}>
           <p className="onboard-wordmark">CATCH A BEAST</p>
           <h1 className="onboard-question">Next, create your username</h1>
           <input
@@ -201,10 +220,13 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
             placeholder="Username"
             value={username}
             maxLength={30}
-            onChange={(e) => setUsername(e.target.value)}
+            onChange={(e) => { setUsername(e.target.value); setError(''); }}
           />
           <p className="onboard-hint">Shown publicly on the leaderboard and on posts — you can't change this later, so pick something you'll want to keep.</p>
-          <button type="submit" className="onboard-continue" disabled={!username.trim()}>Continue</button>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" className="onboard-continue" disabled={loading || !username.trim()}>
+            {loading ? 'Checking…' : 'Continue'}
+          </button>
         </form>
       </div>
     );
@@ -564,7 +586,9 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const [subjectUsername, setSubjectUsername] = useState('');
   const [subjectQuery, setSubjectQuery] = useState('');
   const [subjectResults, setSubjectResults] = useState([]);
-  const [isStranger, setIsStranger] = useState(false);
+  const [subjectMode, setSubjectMode] = useState('friends'); // 'friends' | 'search' | 'stranger'
+  const [friends, setFriends] = useState(null); // null = still loading
+  const isStranger = subjectMode === 'stranger';
   const [strangerName, setStrangerName] = useState('');
   const [customActivity, setCustomActivity] = useState('');
   const [points, setPoints] = useState(10);
@@ -581,6 +605,10 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const selectedGroup = myGroups.find((g) => g.id === Number(groupId));
   const groupMembers = (selectedGroup?.members || []).filter((m) => m.toLowerCase() !== currentUsername.toLowerCase());
   const isSelfPost = destination === 'group' && !!subjectUsername && subjectUsername.toLowerCase() === currentUsername.toLowerCase();
+
+  useEffect(() => {
+    api.getFriends().then(setFriends).catch(() => setFriends([]));
+  }, []);
 
   async function runSubjectSearch(q) {
     setSubjectQuery(q);
@@ -717,44 +745,68 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
               )}
             </label>
           </>
-        ) : isStranger ? (
-          <label>
-            Who's the beast?
-            <input
-              type="text"
-              maxLength={60}
-              placeholder="e.g. guy in the red hat"
-              value={strangerName}
-              onChange={(e) => setStrangerName(e.target.value)}
-              autoFocus
-            />
-            <button type="button" className="link-btn" onClick={() => { setIsStranger(false); setStrangerName(''); }}>
-              Actually, I know their username
-            </button>
-          </label>
         ) : (
           <label>
             Who's the beast?
-            <div className="subject-row">
+            <div className="destination-toggle subject-mode-toggle">
+              <button type="button" className={subjectMode === 'friends' ? 'active' : ''} onClick={() => { setSubjectMode('friends'); setSubjectUsername(''); }}>Friends</button>
+              <button type="button" className={subjectMode === 'search' ? 'active' : ''} onClick={() => { setSubjectMode('search'); setSubjectUsername(''); }}>Search</button>
+              <button type="button" className={subjectMode === 'stranger' ? 'active' : ''} onClick={() => { setSubjectMode('stranger'); setSubjectUsername(''); }}>Random</button>
+            </div>
+
+            {subjectMode === 'friends' && (
+              friends === null ? (
+                <p className="fineprint">Loading friends…</p>
+              ) : friends.length === 0 ? (
+                <p className="fineprint">No friends yet — add some from your Profile, or use Search/Random instead.</p>
+              ) : (
+                <div className="friend-picker-list">
+                  {friends.map((f) => (
+                    <button
+                      type="button"
+                      key={f.username}
+                      className={`friend-picker-row ${subjectUsername === f.username ? 'active' : ''}`}
+                      onClick={() => setSubjectUsername(f.username)}
+                    >
+                      {f.username}
+                    </button>
+                  ))}
+                </div>
+              )
+            )}
+
+            {subjectMode === 'search' && (
+              <>
+                <div className="subject-row">
+                  <input
+                    type="text"
+                    placeholder="Search any nickname"
+                    value={subjectUsername || subjectQuery}
+                    onChange={(e) => runSubjectSearch(e.target.value)}
+                  />
+                </div>
+                {subjectResults.length > 0 && !subjectUsername && (
+                  <div className="subject-results">
+                    {subjectResults.map((name) => (
+                      <button type="button" key={name} className="subject-result" onClick={() => { setSubjectUsername(name); setSubjectResults([]); }}>
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {subjectMode === 'stranger' && (
               <input
                 type="text"
-                placeholder="Search any nickname"
-                value={subjectUsername || subjectQuery}
-                onChange={(e) => runSubjectSearch(e.target.value)}
+                maxLength={60}
+                placeholder="e.g. guy in the red hat"
+                value={strangerName}
+                onChange={(e) => setStrangerName(e.target.value)}
+                autoFocus
               />
-            </div>
-            {subjectResults.length > 0 && !subjectUsername && (
-              <div className="subject-results">
-                {subjectResults.map((name) => (
-                  <button type="button" key={name} className="subject-result" onClick={() => { setSubjectUsername(name); setSubjectResults([]); }}>
-                    {name}
-                  </button>
-                ))}
-              </div>
             )}
-            <button type="button" className="link-btn" onClick={() => { setIsStranger(true); setSubjectUsername(''); setSubjectQuery(''); setSubjectResults([]); }}>
-              I don't know if they have the app
-            </button>
           </label>
         )}
 

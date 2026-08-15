@@ -36,6 +36,7 @@ async function reqForm(path, formData) {
 
 export const api = {
   setToken,
+  checkUsernameAvailable: (username) => req(`/username-available?username=${encodeURIComponent(username)}`),
   signupStart: (realName, username, email) =>
     req('/signup/start', { method: 'POST', body: JSON.stringify({ realName, username, email }) }),
   signupResendCode: (email) => req('/signup/resend-code', { method: 'POST', body: JSON.stringify({ email }) }),

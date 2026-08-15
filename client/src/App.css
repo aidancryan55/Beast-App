@@ -1603,6 +1603,35 @@
   color: var(--text);
 }
 
+.subject-mode-toggle {
+  margin-top: 6px;
+}
+
+.friend-picker-list {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.friend-picker-row {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.friend-picker-row.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+}
+
 /* ---------- Groups ---------- */
 .groups-view {
   display: flex;
