@@ -367,6 +367,22 @@ function isGroupMember(groupId, userId) {
 function getGroupMemberIds(groupId) {
   return db.prepare('SELECT user_id FROM group_members WHERE group_id = ?').all(groupId).map((r) => r.user_id);
 }
+// Called whenever a group's creator (moderator) stops being a member —
+// leaving or deleting their account. Without this, a private
+// approval-gated group is silently left with no one able to approve
+// join requests, since isModerator checks created_by_user_id against a
+// still-current member. Hands ownership to whoever's been in the group
+// longest (excluding the departing user); if no one else is left, the
+// group has no pending requests to approve anyway, so NULL is harmless.
+function transferGroupOwnershipAwayFrom(userId) {
+  const groups = db.prepare('SELECT id FROM groups WHERE created_by_user_id = ?').all(userId);
+  for (const g of groups) {
+    const next = db.prepare(`
+      SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ? ORDER BY joined_at ASC LIMIT 1
+    `).get(g.id, userId);
+    db.prepare('UPDATE groups SET created_by_user_id = ? WHERE id = ?').run(next ? next.user_id : null, g.id);
+  }
+}
 function hasPendingGroupRequest(groupId, userId) {
   return !!db.prepare('SELECT 1 FROM group_join_requests WHERE group_id = ? AND user_id = ?').get(groupId, userId);
 }
@@ -572,9 +588,11 @@ app.delete('/api/account', requireAuth, async (req, res) => {
   const ok = await verifyPassword((req.body || {}).password || '', user.password_hash);
   if (!ok) return res.status(401).json({ error: 'Wrong password.' });
 
-  // Detach group ownership first so deleting your account never cascades into
-  // destroying a group other people are still in (see note in db.js).
-  db.prepare('UPDATE groups SET created_by_user_id = NULL WHERE created_by_user_id = ?').run(user.id);
+  // Hand off group ownership first so deleting your account never cascades
+  // into destroying a group other people are still in (see note in db.js),
+  // and so private approval-gated groups you moderated don't get stranded
+  // with no one able to approve join requests.
+  transferGroupOwnershipAwayFrom(user.id);
 
   const photos = db.prepare(`
     SELECT photo_filename, photo_url, inset_photo_filename, inset_photo_url
@@ -1007,6 +1025,7 @@ app.post('/api/groups/:groupId/leave', requireAuth, (req, res) => {
   const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
   if (!group) return res.status(404).json({ error: 'Group not found' });
   db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(group.id, req.authUser.id);
+  if (group.created_by_user_id === req.authUser.id) transferGroupOwnershipAwayFrom(req.authUser.id);
   res.json({ status: 'left' });
 });
 
