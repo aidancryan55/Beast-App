@@ -1182,8 +1182,12 @@ function serializePost(row, viewerUserId) {
   `).all(row.id).map((c) => ({ id: c.id, username: c.username, body: c.body, createdAt: c.created_at }));
   const totalPoints = db.prepare('SELECT COALESCE(SUM(points), 0) as total FROM post_credits WHERE post_id = ?').get(row.id).total;
   const creditorCount = db.prepare('SELECT COUNT(*) as n FROM post_credits WHERE post_id = ?').get(row.id).n;
-  const myCredit = viewerUserId
-    ? db.prepare('SELECT points FROM post_credits WHERE post_id = ? AND awarder_user_id = ?').get(row.id, viewerUserId)
+  const myCreditRow = viewerUserId
+    ? db.prepare(`
+        SELECT pc.points, u.username as subject_username FROM post_credits pc
+        LEFT JOIN users u ON u.id = pc.subject_user_id
+        WHERE pc.post_id = ? AND pc.awarder_user_id = ?
+      `).get(row.id, viewerUserId)
     : null;
   const isStranger = !!row.subject_display_name;
   const maxCredit = isStranger
@@ -1197,11 +1201,17 @@ function serializePost(row, viewerUserId) {
   const isAnonymous = !!row.is_anonymous;
   const extraPhotoUrls = db.prepare('SELECT photo_filename, photo_url FROM post_photos WHERE post_id = ? ORDER BY position ASC')
     .all(row.id).map((p) => p.photo_url || `/uploads/${p.photo_filename}`);
+  const additionalSubjects = db.prepare(`
+    SELECT u.username, u.avatar_url FROM post_additional_subjects pas
+    JOIN users u ON u.id = pas.user_id
+    WHERE pas.post_id = ?
+  `).all(row.id).map((u) => ({ username: u.username, avatarUrl: u.avatar_url || null }));
 
   return {
     id: row.id,
     subjectUsername: row.subject_username,
     subjectDisplayName: row.subject_display_name || null,
+    additionalSubjects,
     creditedByUsername: isAnonymous ? 'Anonymous' : row.credited_by_username,
     creditedByAvatarUrl: isAnonymous ? null : (row.credited_by_avatar_url || null),
     isAnonymous,
@@ -1213,7 +1223,8 @@ function serializePost(row, viewerUserId) {
     groupName: row.group_name || null,
     points: totalPoints,
     creditorCount,
-    myCredit: myCredit ? myCredit.points : null,
+    myCredit: myCreditRow ? myCreditRow.points : null,
+    myCreditSubjectUsername: myCreditRow ? myCreditRow.subject_username : null,
     maxCredit,
     caption: row.caption,
     saved: !!row.saved,
@@ -1232,6 +1243,8 @@ function serializePost(row, viewerUserId) {
 // Extra carousel photos, max 4 — capped well below multer's per-file size
 // limit's blast radius, and matches what the composer UI offers.
 const MAX_EXTRA_PHOTOS = 4;
+// Extra tagged people beyond the primary subject — 4 tagged total including them.
+const MAX_ADDITIONAL_SUBJECTS = 3;
 
 app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'insetPhoto', maxCount: 1 }, { name: 'extraPhotos', maxCount: MAX_EXTRA_PHOTOS }]), async (req, res) => {
   const creditedBy = req.authUser;
@@ -1321,6 +1334,26 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
     groupId = group.id;
   }
 
+  // Tag up to MAX_ADDITIONAL_SUBJECTS more real people beyond the primary
+  // subject — never on stranger or self posts (see isSelfPost/isStranger
+  // above). Invalid entries (duplicate, blocked, not a real account, not in
+  // the group) are silently dropped rather than failing the whole post —
+  // this is a nice-to-have add-on, not something worth blocking a post over.
+  const additionalSubjects = [];
+  if (!isStranger && !isSelfPost) {
+    const rawAdditional = Array.isArray(body.additionalSubjects)
+      ? body.additionalSubjects
+      : (body.additionalSubjects ? [body.additionalSubjects] : []);
+    const seen = new Set([subject.id, creditedBy.id]);
+    for (const uname of rawAdditional.slice(0, MAX_ADDITIONAL_SUBJECTS)) {
+      const u = getUserByUsername(uname);
+      if (!u || seen.has(u.id) || isBlocked(creditedBy.id, u.id)) continue;
+      if (visibility === 'group' && !isGroupMember(groupId, u.id)) continue;
+      seen.add(u.id);
+      additionalSubjects.push(u);
+    }
+  }
+
   let activity = null;
   if (body.activityKey) {
     activity = db.prepare('SELECT * FROM activities WHERE key = ?').get(body.activityKey);
@@ -1354,6 +1387,9 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
     db.prepare('INSERT INTO post_photos (post_id, photo_filename, photo_url, position) VALUES (?, ?, ?, ?)')
       .run(info.lastInsertRowid, f.filename, extraUrl || null, i);
   }
+  for (const u of additionalSubjects) {
+    db.prepare('INSERT INTO post_additional_subjects (post_id, user_id) VALUES (?, ?)').run(info.lastInsertRowid, u.id);
+  }
 
   // Stored as a post_credits row (awarder = poster) so existing per-post
   // display logic (creditorCount, card totals) needs no rework, and
@@ -1364,8 +1400,8 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
   // whole point of self-posts being display-only for the poster's own
   // starter amount; only other members' later crowd credit is real.
   if (!isStranger) {
-    db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)')
-      .run(info.lastInsertRowid, creditedBy.id, points);
+    db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, subject_user_id, points) VALUES (?, ?, ?, ?)')
+      .run(info.lastInsertRowid, creditedBy.id, subject.id, points);
     if (!isSelfPost) {
       writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
     }
@@ -1393,7 +1429,30 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
-  if (post.subject_user_id === user.id) return res.status(400).json({ error: "You can't credit yourself" });
+
+  const isStranger = !!post.subject_display_name;
+
+  // Multi-tag posts let the crowd choose which tagged person their credit
+  // goes to. Once you've credited someone specific on a post, re-hitting
+  // this endpoint (to adjust the amount) can only ever apply to that same
+  // person — retargeting an existing credit to someone else would silently
+  // move points between two different people's ledgers (points_ledger has
+  // no per-recipient uniqueness within a post, only per-contributor), so
+  // the target is locked in on the first credit and ignored after that.
+  const existingCredit = db.prepare('SELECT subject_user_id FROM post_credits WHERE post_id = ? AND awarder_user_id = ?').get(post.id, user.id);
+  let subjectUserId = post.subject_user_id;
+  if (existingCredit && existingCredit.subject_user_id) {
+    subjectUserId = existingCredit.subject_user_id;
+  } else if (!isStranger && (req.body || {}).subjectUsername) {
+    const chosen = getUserByUsername(req.body.subjectUsername);
+    const isPrimary = chosen && chosen.id === post.subject_user_id;
+    const isAdditional = chosen && !isPrimary
+      && !!db.prepare('SELECT 1 FROM post_additional_subjects WHERE post_id = ? AND user_id = ?').get(post.id, chosen.id);
+    if (!chosen || (!isPrimary && !isAdditional)) return res.status(400).json({ error: 'That person is not tagged on this post' });
+    subjectUserId = chosen.id;
+  }
+
+  if (subjectUserId === user.id) return res.status(400).json({ error: "You can't credit yourself" });
   // The poster already set their own starter credit for this post at
   // creation time — without this check they could re-hit this endpoint
   // and, via the ON CONFLICT upsert below, overwrite that amount up to the
@@ -1410,11 +1469,10 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
   // check and the ledger write entirely, since there's no real recipient
   // for those points to land on. Writing them to subject_user_id's ledger
   // would silently hand the poster free points for tagging a made-up name.
-  const isStranger = !!post.subject_display_name;
   const points = parseInt((req.body || {}).points, 10);
   let max = maxCreditFor();
   if (!isStranger) {
-    const budget = creditBudgetFor(post.subject_user_id, user.id, post.id);
+    const budget = creditBudgetFor(subjectUserId, user.id, post.id);
     if (budget <= 0) {
       return res.status(400).json({ error: `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points` });
     }
@@ -1425,11 +1483,13 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
   }
 
   db.prepare(`
-    INSERT INTO post_credits (post_id, awarder_user_id, points) VALUES (?, ?, ?)
-    ON CONFLICT(post_id, awarder_user_id) DO UPDATE SET points = excluded.points
-  `).run(post.id, user.id, points);
+    INSERT INTO post_credits (post_id, awarder_user_id, subject_user_id, points) VALUES (?, ?, ?, ?)
+    ON CONFLICT(post_id, awarder_user_id) DO UPDATE SET
+      points = excluded.points,
+      subject_user_id = COALESCE(post_credits.subject_user_id, excluded.subject_user_id)
+  `).run(post.id, user.id, subjectUserId, points);
   if (!isStranger) {
-    writeLedgerEntry(post.subject_user_id, points, 'crowd_credit', post.id, user.id);
+    writeLedgerEntry(subjectUserId, points, 'crowd_credit', post.id, user.id);
   }
 
   res.json(serializePost(getPostRow(post.id), user.id));

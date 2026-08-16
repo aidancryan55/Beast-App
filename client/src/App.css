@@ -1582,6 +1582,20 @@
   flex-wrap: wrap;
 }
 
+.credit-subject-picker {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.credit-subject-picker .fineprint {
+  width: 100%;
+  margin: 0 0 2px;
+}
+
+.post-head-tagged-extra {
+  white-space: nowrap;
+}
+
 .preset-btn {
   font-size: 12px;
   font-weight: 700;

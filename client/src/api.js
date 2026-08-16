@@ -77,7 +77,7 @@ export const api = {
   leaveGroup: (groupId) => req(`/groups/${groupId}/leave`, { method: 'POST' }),
   getGroupFeed: (groupId) => req(`/groups/${groupId}/feed`),
 
-  createPost: ({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, visibility, groupId, isAnonymous, dareId, points }) => {
+  createPost: ({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, visibility, groupId, isAnonymous, dareId, points }) => {
     const form = new FormData();
     form.append('subjectUsername', subjectUsername || '');
     if (subjectDisplayName) form.append('subjectDisplayName', subjectDisplayName);
@@ -87,6 +87,7 @@ export const api = {
     form.append('photo', photo, photo.name || 'photo.jpg');
     if (insetPhoto) form.append('insetPhoto', insetPhoto, insetPhoto.name || 'inset.jpg');
     for (const extra of extraPhotos || []) form.append('extraPhotos', extra, extra.name || 'photo.jpg');
+    for (const name of additionalSubjects || []) form.append('additionalSubjects', name);
     form.append('visibility', visibility || 'public');
     if (groupId) form.append('groupId', groupId);
     if (isAnonymous) form.append('isAnonymous', 'true');
@@ -96,7 +97,7 @@ export const api = {
   reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),
   commentOnPost: (postId, body) => req(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
   savePost: (postId) => req(`/posts/${postId}/save`, { method: 'POST' }),
-  creditPost: (postId, points) => req(`/posts/${postId}/credit`, { method: 'POST', body: JSON.stringify({ points }) }),
+  creditPost: (postId, points, subjectUsername) => req(`/posts/${postId}/credit`, { method: 'POST', body: JSON.stringify({ points, subjectUsername }) }),
   reportPost: (postId, reason) => req(`/posts/${postId}/report`, { method: 'POST', body: JSON.stringify({ reason }) }),
 
   getBlockedUsers: () => req('/users/_/blocked'),

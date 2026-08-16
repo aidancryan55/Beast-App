@@ -602,9 +602,11 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const [dualCaptureOpen, setDualCaptureOpen] = useState(false);
   const [extraPhotos, setExtraPhotos] = useState([]); // File[], max MAX_EXTRA_PHOTOS
   const [extraPreviews, setExtraPreviews] = useState([]);
+  const [additionalSubjects, setAdditionalSubjects] = useState([]); // usernames, max MAX_ADDITIONAL_SUBJECTS
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const MAX_EXTRA_PHOTOS = 4;
+  const MAX_ADDITIONAL_SUBJECTS = 3;
 
   const selectedGroup = myGroups.find((g) => g.id === Number(groupId));
   const groupMembers = (selectedGroup?.members || []).filter((m) => m.toLowerCase() !== currentUsername.toLowerCase());
@@ -663,6 +665,12 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
     setExtraPreviews((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  function toggleAdditionalSubject(username) {
+    setAdditionalSubjects((prev) => prev.includes(username)
+      ? prev.filter((u) => u !== username)
+      : (prev.length < MAX_ADDITIONAL_SUBJECTS ? [...prev, username] : prev));
+  }
+
   async function submit(e) {
     e.preventDefault();
     if (!photo) return setError('Add a photo first');
@@ -695,6 +703,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         photo,
         insetPhoto,
         extraPhotos,
+        additionalSubjects: isStranger || isSelfPost ? [] : additionalSubjects,
         points: pointsNum,
         visibility: destination,
         groupId: destination === 'group' ? groupId : null,
@@ -852,6 +861,32 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
           </label>
         )}
 
+        {!isStranger && !isSelfPost && subjectUsername && (
+          (() => {
+            const pool = (destination === 'group' ? groupMembers : (friends || []).map((f) => f.username))
+              .filter((m) => m !== subjectUsername);
+            if (!pool.length) return null;
+            return (
+              <label>
+                Tag more people? (optional, up to {MAX_ADDITIONAL_SUBJECTS})
+                <div className="friend-picker-list">
+                  {pool.map((m) => (
+                    <button
+                      type="button"
+                      key={m}
+                      className={`friend-picker-row ${additionalSubjects.includes(m) ? 'active' : ''}`}
+                      onClick={() => toggleAdditionalSubject(m)}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+                <p className="fineprint">Everyone tagged shares the same points pool below — the crowd decides who gets what.</p>
+              </label>
+            );
+          })()
+        )}
+
         <label>
           What'd they do? (optional)
           <input
@@ -943,12 +978,17 @@ function GiveCredit({ post, onCredit }) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const taggedPeople = [post.subjectUsername, ...(post.additionalSubjects || []).map((s) => s.username)];
+  const hasMultiple = taggedPeople.length > 1;
+  const lockedSubject = post.myCreditSubjectUsername || null;
+  const [chosenSubject, setChosenSubject] = useState('');
+  const targetSubject = lockedSubject || chosenSubject;
 
   async function submit(amount) {
     setError('');
     setSubmitting(true);
     try {
-      await onCredit(post.id, Number(amount));
+      await onCredit(post.id, Number(amount), targetSubject);
       setOpen(false);
     } catch (err) {
       setError(err.message);
@@ -960,8 +1000,19 @@ function GiveCredit({ post, onCredit }) {
   if (!open) {
     return (
       <button type="button" className="give-credit-btn" onClick={() => setOpen(true)}>
-        {post.myCredit ? `You gave ${post.myCredit} BP` : 'Give points'}
+        {post.myCredit ? `You gave ${post.myCredit} BP${lockedSubject ? ` to ${lockedSubject}` : ''}` : 'Give points'}
       </button>
+    );
+  }
+  if (hasMultiple && !targetSubject) {
+    return (
+      <div className="give-credit-form credit-subject-picker">
+        <p className="fineprint">Who are you giving points to?</p>
+        {taggedPeople.map((name) => (
+          <button key={name} type="button" className="subject-result" onClick={() => setChosenSubject(name)}>{name}</button>
+        ))}
+        <button type="button" className="secondary-btn" onClick={() => setOpen(false)}>×</button>
+      </div>
     );
   }
   return <CreditFormPresets post={post} submit={submit} close={() => setOpen(false)} error={error} submitting={submitting} />;
@@ -1107,6 +1158,11 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
             ) : (
               <button type="button" className="post-head-name" onClick={() => onOpenProfile(post.subjectUsername)}>{post.subjectUsername}</button>
             )}
+            {post.additionalSubjects && post.additionalSubjects.map((s) => (
+              <span key={s.username} className="post-head-tagged-extra">
+                , <button type="button" className="post-head-name" onClick={() => onOpenProfile(s.username)}>{s.username}</button>
+              </span>
+            ))}
           </div>
           <div className="post-head-meta">
             {post.visibility === 'group' ? post.groupName : 'Public'}
@@ -2507,9 +2563,9 @@ export default function App() {
     await Promise.all(jobs);
   }
 
-  async function handleSubmitPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, points, visibility, groupId, isAnonymous }) {
+  async function handleSubmitPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, points, visibility, groupId, isAnonymous }) {
     await withAuthGuard(async () => {
-      await api.createPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, points, visibility, groupId, isAnonymous });
+      await api.createPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, points, visibility, groupId, isAnonymous });
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);
@@ -2538,9 +2594,9 @@ export default function App() {
     });
   }
 
-  async function handleCreditPost(postId, points) {
+  async function handleCreditPost(postId, points, subjectUsername) {
     await withAuthGuard(async () => {
-      await api.creditPost(postId, points);
+      await api.creditPost(postId, points, subjectUsername);
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);

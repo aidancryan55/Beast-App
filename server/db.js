@@ -100,10 +100,23 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_post_photos_post ON post_photos(post_id, position);
 
+  -- Extra tagged people beyond the required primary subject_user_id on
+  -- posts — purely additive, capped at MAX_ADDITIONAL_SUBJECTS in index.js.
+  -- The post's points badge/total stays one shared pool across everyone
+  -- tagged (see post_credits.subject_user_id below) rather than per-person
+  -- budgets, per the "shared budget, split however" design.
+  CREATE TABLE IF NOT EXISTS post_additional_subjects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(post_id, user_id)
+  );
+
   CREATE TABLE IF NOT EXISTS post_credits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
     awarder_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     points INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(post_id, awarder_user_id)
@@ -365,6 +378,18 @@ if (postCols.length) {
       WHERE points IS NOT NULL
     `);
   }
+}
+
+const postCreditCols = db.prepare('PRAGMA table_info(post_credits)').all().map((c) => c.name);
+if (postCreditCols.length && !postCreditCols.includes('subject_user_id')) {
+  db.exec('ALTER TABLE post_credits ADD COLUMN subject_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+  // Backfill: every pre-existing credit row was implicitly for the post's
+  // one and only subject, before multi-tag posts could have more than one.
+  db.exec(`
+    UPDATE post_credits SET subject_user_id = (
+      SELECT subject_user_id FROM posts WHERE posts.id = post_credits.post_id
+    ) WHERE subject_user_id IS NULL
+  `);
 }
 
 const dareCols = db.prepare('PRAGMA table_info(dares)').all().map((c) => c.name);
