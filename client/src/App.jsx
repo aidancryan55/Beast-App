@@ -865,13 +865,12 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
 
 const REACTION_EMOJIS = ['🔥', '😂', '💀', '👑', '🐐'];
 
-// TEMP: 4 selectable variants for A/B testing the crediting UX, picked via
-// the temporary credit-style bar in the header (see App). Remove the
-// branching (and 3 of the 4 variant components) once one is chosen.
+const CREDIT_PRESETS = [5, 10, 25, 50, 75, 100];
+
 function CreditFormPresets({ post, submit, close, error, submitting }) {
   const [showCustom, setShowCustom] = useState(false);
   const [customAmount, setCustomAmount] = useState(Math.min(10, post.maxCredit));
-  const presets = [5, 10, 25, 50].filter((p) => p <= post.maxCredit);
+  const presets = CREDIT_PRESETS.filter((p) => p <= post.maxCredit);
 
   if (showCustom) {
     return (
@@ -898,84 +897,10 @@ function CreditFormPresets({ post, submit, close, error, submitting }) {
   );
 }
 
-function CreditFormHold({ post, submit, close, error, submitting }) {
-  const [amount, setAmount] = useState(0);
-  const [holding, setHolding] = useState(false);
-  const intervalRef = useRef(null);
-  const startRef = useRef(0);
-
-  function startHold() {
-    if (submitting) return;
-    setHolding(true);
-    setAmount(1);
-    startRef.current = Date.now();
-    intervalRef.current = setInterval(() => {
-      const elapsed = Date.now() - startRef.current;
-      const pct = Math.min(1, elapsed / 2200);
-      setAmount(Math.max(1, Math.min(post.maxCredit, Math.round(pct * pct * post.maxCredit))));
-    }, 40);
-  }
-  function endHold() {
-    setHolding(false);
-    clearInterval(intervalRef.current);
-  }
-  function release() {
-    if (!holding) return;
-    endHold();
-    if (amount > 0) submit(amount);
-  }
-
-  useEffect(() => () => clearInterval(intervalRef.current), []);
-
-  return (
-    <div className="give-credit-form give-credit-hold">
-      <div className="hold-amount">{amount > 0 ? `${amount} BP` : 'Hold below'}</div>
-      <button
-        type="button"
-        className={`hold-btn ${holding ? 'holding' : ''}`}
-        onPointerDown={startHold}
-        onPointerUp={release}
-        onPointerLeave={() => holding && release()}
-        disabled={submitting}
-      >
-        {holding ? 'Keep holding…' : 'Hold to pump'}
-      </button>
-      <button type="button" className="secondary-btn" onClick={close}>×</button>
-      {error && <span className="error">{error}</span>}
-    </div>
-  );
-}
-
-function CreditFormSlider({ post, submit, close, error, submitting }) {
-  const [amount, setAmount] = useState(Math.min(10, post.maxCredit));
-  return (
-    <div className="give-credit-form give-credit-slider">
-      <input type="range" min="1" max={post.maxCredit} value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
-      <div className="slider-amount">{amount} BP</div>
-      <button type="button" onClick={() => submit(amount)} disabled={submitting}>Give</button>
-      <button type="button" className="secondary-btn" onClick={close}>×</button>
-      {error && <span className="error">{error}</span>}
-    </div>
-  );
-}
-
-function CreditFormPunchy({ post, submit, close, error, submitting }) {
-  const [amount, setAmount] = useState(Math.min(10, post.maxCredit));
-  return (
-    <form className="give-credit-form give-credit-punchy" onSubmit={(e) => { e.preventDefault(); submit(Number(amount)); }}>
-      <input type="number" min="1" max={post.maxCredit} value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
-      <button type="submit" className="punchy-give-btn" disabled={submitting}>Give</button>
-      <button type="button" className="secondary-btn" onClick={close}>×</button>
-      {error && <span className="error">{error}</span>}
-    </form>
-  );
-}
-
 function GiveCredit({ post, onCredit }) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const creditStyle = (typeof window !== 'undefined' && localStorage.getItem('creditStyle')) || 'presets';
 
   async function submit(amount) {
     setError('');
@@ -997,11 +922,7 @@ function GiveCredit({ post, onCredit }) {
       </button>
     );
   }
-  const props = { post, submit, close: () => setOpen(false), error, submitting };
-  if (creditStyle === 'hold') return <CreditFormHold {...props} />;
-  if (creditStyle === 'slider') return <CreditFormSlider {...props} />;
-  if (creditStyle === 'punchy') return <CreditFormPunchy {...props} />;
-  return <CreditFormPresets {...props} />;
+  return <CreditFormPresets post={post} submit={submit} close={() => setOpen(false)} error={error} submitting={submitting} />;
 }
 
 function ReportButton({ post, onReport }) {
@@ -2153,12 +2074,6 @@ export default function App() {
   const [memories, setMemories] = useState([]);
   const [tab, setTab] = useState('discover');
   const [showComposer, setShowComposer] = useState(false);
-  const [transitionStyle, setTransitionStyle] = useState('t-fadeup'); // TEMP: transition A/B test, remove after picking one
-  const [creditStyle, setCreditStyleState] = useState(() => (typeof window !== 'undefined' && localStorage.getItem('creditStyle')) || 'presets'); // TEMP: crediting UX A/B test, remove after picking one
-  function setCreditStyle(v) {
-    localStorage.setItem('creditStyle', v);
-    setCreditStyleState(v);
-  }
   const [loadError, setLoadError] = useState('');
 
   function openComposer() {
@@ -2467,23 +2382,8 @@ export default function App() {
         </div>
       )}
 
-      <div className="transition-picker">
-        {['t-fadeup', 't-crossfade', 't-slideright', 't-scale'].map((t) => (
-          <button key={t} type="button" className={transitionStyle === t ? 'active' : ''} onClick={() => setTransitionStyle(t)}>
-            {t.replace('t-', '')}
-          </button>
-        ))}
-      </div>
-      <div className="transition-picker">
-        {['presets', 'hold', 'slider', 'punchy'].map((c) => (
-          <button key={c} type="button" className={creditStyle === c ? 'active' : ''} onClick={() => setCreditStyle(c)}>
-            {c}
-          </button>
-        ))}
-      </div>
-
       <main className="app-main">
-        <div key={tab === 'groups' ? `groups-${activeGroupId || 'list'}` : tab} className={`app-main-content ${transitionStyle}`}>
+        <div key={tab === 'groups' ? `groups-${activeGroupId || 'list'}` : tab} className="app-main-content">
         {tab === 'discover' && (
           <DiscoverView
             discoverFeed={discoverFeed}

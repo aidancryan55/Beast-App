@@ -19,6 +19,8 @@
   --primary-dark: #3a3a3c;
   --primary-contrast: #ffffff;
   --accent: #6e6e73;
+  --points-accent: #b9790a;
+  --points-accent-contrast: #1a1206;
   --success: #34c759;
   --shadow: 0 10px 25px -8px rgba(0, 0, 0, 0.08);
 
@@ -44,6 +46,8 @@
     --primary-dark: #d1d1d6;
     --primary-contrast: #000000;
     --accent: #98989d;
+    --points-accent: #f2b135;
+    --points-accent-contrast: #1a1206;
     --success: #30d158;
     --shadow: 0 10px 25px -8px rgba(0, 0, 0, 0.6);
     color-scheme: dark;
