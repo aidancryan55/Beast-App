@@ -58,6 +58,18 @@
   margin-bottom: 24px;
 }
 
+.invite-banner {
+  background: color-mix(in srgb, var(--points-accent) 14%, transparent);
+  color: var(--points-accent);
+  border: 1px solid color-mix(in srgb, var(--points-accent) 30%, transparent);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 700;
+  font-size: 14px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
 .auth-toggle {
   display: flex;
   flex-direction: column;
@@ -672,6 +684,28 @@
 .avatar-edit-placeholder {
   font-size: 22px;
   opacity: 0.6;
+}
+
+.invite-link-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.invite-link-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.invite-link-row button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .inline-edit-form {

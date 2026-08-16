@@ -69,7 +69,7 @@ function IconSettings(props) {
   );
 }
 
-function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerifyCode, onSignupFinish }) {
+function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerifyCode, onSignupFinish, inviteFrom }) {
   // 'landing' | 'signup-realname' | 'signup-username' | 'signup-avatar' | 'signup-email' | 'signup-code' | 'signup-password' | 'login'
   const [screen, setScreen] = useState('landing');
   const [realName, setRealName] = useState('');
@@ -377,6 +377,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
         <p className="login-subtext">Earn Beast Points. Become a Beast.</p>
       </div>
       <div className="login-card">
+        {inviteFrom && <p className="invite-banner">🎉 {inviteFrom} invited you to Catch a Beast</p>}
         <div className="auth-toggle">
           <button type="button" onClick={() => { setError(''); setScreen('signup-realname'); }}>Create Account</button>
           <button type="button" className="secondary" onClick={() => { setError(''); setScreen('login'); }}>Log In</button>
@@ -2081,11 +2082,32 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
   );
 }
 
-function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, mutedUsers, onUnmute, onDeleteAccount, avatarUrl, onAvatarUpdated, onBack }) {
+function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, mutedUsers, onUnmute, onDeleteAccount, avatarUrl, onAvatarUpdated, onBack, displayName }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [inviteStatus, setInviteStatus] = useState('');
+
+  const inviteLink = `${window.location.origin}/invite/${encodeURIComponent(displayName)}`;
+
+  async function shareInvite() {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Catch a Beast', text: `${displayName} invited you to Catch a Beast`, url: inviteLink });
+        return;
+      } catch {
+        return; // user cancelled the share sheet
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setInviteStatus('Link copied ✓');
+      setTimeout(() => setInviteStatus(''), 2000);
+    } catch {
+      setInviteStatus('Could not copy — long-press to select the link above');
+    }
+  }
 
   async function submitDelete(e) {
     e.preventDefault();
@@ -2107,6 +2129,15 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
       </div>
 
       <EditProfileSection avatarUrl={avatarUrl} onAvatarUpdated={onAvatarUpdated} />
+
+      <section className="friend-section">
+        <h2>Invite friends</h2>
+        <p className="fineprint">Share your link — anyone who signs up from it gets sent your friend request automatically.</p>
+        <div className="invite-link-row">
+          <input type="text" readOnly value={inviteLink} onFocus={(e) => e.target.select()} />
+          <button type="button" className="friend-action" onClick={shareInvite}>{inviteStatus || (navigator.share ? 'Share' : 'Copy')}</button>
+        </div>
+      </section>
 
       <section className="friend-section">
         <h2>Beast Streak</h2>
@@ -2214,6 +2245,14 @@ function AdminView({ reports, onResolve }) {
   );
 }
 
+// Reads /invite/USERNAME straight from the current URL — no server round-trip
+// needed since the SPA catch-all already serves index.html for any non-/api
+// path (see the Express route at the bottom of server/index.js).
+function inviteRefFromLocation() {
+  const match = window.location.pathname.match(/^\/invite\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function loadStoredAuth() {
   try {
     const raw = localStorage.getItem('ccq_auth');
@@ -2248,6 +2287,7 @@ export default function App() {
   const [loadError, setLoadError] = useState('');
   const [profileUsername, setProfileUsername] = useState(null);
   const [previousTab, setPreviousTab] = useState('discover');
+  const [inviteFrom] = useState(inviteRefFromLocation);
 
   function openComposer() {
     setTab('discover');
@@ -2301,6 +2341,12 @@ export default function App() {
     const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin, avatarUrl: result.avatarUrl || null };
     localStorage.setItem('ccq_auth', JSON.stringify(authData));
     setAuth(authData);
+
+    if (inviteFrom && inviteFrom.toLowerCase() !== result.displayName.toLowerCase()) {
+      // Best-effort — a stale/invalid invite link shouldn't block signup.
+      api.sendFriendRequest(inviteFrom).catch(() => {});
+    }
+    window.history.replaceState(null, '', '/');
 
     if (avatarFile) {
       // Best-effort — the account is already created at this point, so a
@@ -2553,6 +2599,7 @@ export default function App() {
         onSignupResendCode={handleSignupResendCode}
         onSignupVerifyCode={handleSignupVerifyCode}
         onSignupFinish={handleSignupFinish}
+        inviteFrom={inviteFrom}
       />
     );
   }
@@ -2675,6 +2722,7 @@ export default function App() {
             avatarUrl={auth.avatarUrl}
             onAvatarUpdated={handleAvatarUpdated}
             onBack={() => setTab('profile')}
+            displayName={displayName}
           />
         )}
         {tab === 'admin' && isAdmin && <AdminView reports={adminReports} onResolve={handleResolveReport} />}
