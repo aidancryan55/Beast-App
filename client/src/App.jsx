@@ -600,8 +600,11 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const [insetPhoto, setInsetPhoto] = useState(null);
   const [insetPreview, setInsetPreview] = useState('');
   const [dualCaptureOpen, setDualCaptureOpen] = useState(false);
+  const [extraPhotos, setExtraPhotos] = useState([]); // File[], max MAX_EXTRA_PHOTOS
+  const [extraPreviews, setExtraPreviews] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const MAX_EXTRA_PHOTOS = 4;
 
   const selectedGroup = myGroups.find((g) => g.id === Number(groupId));
   const groupMembers = (selectedGroup?.members || []).filter((m) => m.toLowerCase() !== currentUsername.toLowerCase());
@@ -643,6 +646,21 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
     setPreview('');
     setInsetPhoto(null);
     setInsetPreview('');
+    setExtraPhotos([]);
+    setExtraPreviews([]);
+  }
+
+  function addExtraPhotos(e) {
+    const files = Array.from(e.target.files || []).slice(0, MAX_EXTRA_PHOTOS - extraPhotos.length);
+    if (!files.length) return;
+    setExtraPhotos((prev) => [...prev, ...files]);
+    setExtraPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
+    e.target.value = '';
+  }
+
+  function removeExtraPhoto(i) {
+    setExtraPhotos((prev) => prev.filter((_, idx) => idx !== i));
+    setExtraPreviews((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   async function submit(e) {
@@ -676,6 +694,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         caption,
         photo,
         insetPhoto,
+        extraPhotos,
         points: pointsNum,
         visibility: destination,
         groupId: destination === 'group' ? groupId : null,
@@ -712,7 +731,29 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
             {insetPreview && <img src={insetPreview} alt="" className="photo-preview-inset" />}
             <button type="button" className="secondary-btn retake-btn" onClick={retakePhoto}>Retake</button>
           </div>
-        ) : (
+        ) : null}
+
+        {preview && (
+          <div className="extra-photos-picker">
+            <div className="extra-photos-row">
+              {extraPreviews.map((src, i) => (
+                <div key={src} className="extra-photo-thumb">
+                  <img src={src} alt="" />
+                  <button type="button" className="extra-photo-remove" onClick={() => removeExtraPhoto(i)} aria-label="Remove photo">×</button>
+                </div>
+              ))}
+              {extraPhotos.length < MAX_EXTRA_PHOTOS && (
+                <label className="extra-photo-add">
+                  +
+                  <input type="file" accept="image/*" multiple onChange={addExtraPhotos} hidden />
+                </label>
+              )}
+            </div>
+            <p className="fineprint">Add up to {MAX_EXTRA_PHOTOS} more photos ({extraPhotos.length}/{MAX_EXTRA_PHOTOS})</p>
+          </div>
+        )}
+
+        {!dualCaptureOpen && !preview && (
           <div className="photo-capture-options">
             <button type="button" className="dual-capture-btn" onClick={() => setDualCaptureOpen(true)}>Dual Capture</button>
             <label className="photo-picker-fallback">
@@ -1034,6 +1075,13 @@ function CommentsSection({ post, onComment }) {
 function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapped, setSwapped] = useState(false); // tap-to-swap which shot is on top, purely local to this viewer
+  const [activeSlide, setActiveSlide] = useState(0);
+  const hasCarousel = post.extraPhotoUrls && post.extraPhotoUrls.length > 0;
+
+  function handleCarouselScroll(e) {
+    const el = e.currentTarget;
+    setActiveSlide(Math.round(el.scrollLeft / el.clientWidth));
+  }
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
   const isPoster = post.creditedByUsername.toLowerCase() === currentUsername.toLowerCase();
   const hoursLeft = post.saved ? null : Math.max(0, Math.ceil((Date.parse(post.expiresAt) - Date.now()) / 3600000));
@@ -1087,16 +1135,48 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
       {post.caption && <p className="post-card-caption">{post.caption}</p>}
 
       <div className="post-photo-wrap">
-        <img className="post-photo-full" src={swapped && post.insetPhotoUrl ? post.insetPhotoUrl : post.photoUrl} alt="" />
-        {post.insetPhotoUrl && (
-          <button
-            type="button"
-            className="post-photo-inset"
-            onClick={() => setSwapped((s) => !s)}
-            aria-label="Swap which photo is on top"
-          >
-            <img src={swapped ? post.photoUrl : post.insetPhotoUrl} alt="" />
-          </button>
+        {hasCarousel ? (
+          <div className="post-photo-carousel" onScroll={handleCarouselScroll}>
+            <div className="post-photo-slide">
+              <img className="post-photo-full" src={swapped && post.insetPhotoUrl ? post.insetPhotoUrl : post.photoUrl} alt="" />
+              {post.insetPhotoUrl && (
+                <button
+                  type="button"
+                  className="post-photo-inset"
+                  onClick={() => setSwapped((s) => !s)}
+                  aria-label="Swap which photo is on top"
+                >
+                  <img src={swapped ? post.photoUrl : post.insetPhotoUrl} alt="" />
+                </button>
+              )}
+            </div>
+            {post.extraPhotoUrls.map((url) => (
+              <div className="post-photo-slide" key={url}>
+                <img className="post-photo-full" src={url} alt="" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <>
+            <img className="post-photo-full" src={swapped && post.insetPhotoUrl ? post.insetPhotoUrl : post.photoUrl} alt="" />
+            {post.insetPhotoUrl && (
+              <button
+                type="button"
+                className="post-photo-inset"
+                onClick={() => setSwapped((s) => !s)}
+                aria-label="Swap which photo is on top"
+              >
+                <img src={swapped ? post.photoUrl : post.insetPhotoUrl} alt="" />
+              </button>
+            )}
+          </>
+        )}
+        {hasCarousel && (
+          <div className="post-photo-dots">
+            {Array.from({ length: 1 + post.extraPhotoUrls.length }).map((_, i) => (
+              <span key={i} className={i === activeSlide ? 'active' : ''} />
+            ))}
+          </div>
         )}
         <div className="post-points-badge">+{post.points} BP</div>
         <div className="post-photo-actions">
@@ -2427,9 +2507,9 @@ export default function App() {
     await Promise.all(jobs);
   }
 
-  async function handleSubmitPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous }) {
+  async function handleSubmitPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, points, visibility, groupId, isAnonymous }) {
     await withAuthGuard(async () => {
-      await api.createPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, points, visibility, groupId, isAnonymous });
+      await api.createPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, points, visibility, groupId, isAnonymous });
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);

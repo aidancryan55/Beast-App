@@ -954,6 +954,59 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
+.extra-photos-picker {
+  margin-top: 4px;
+}
+
+.extra-photos-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.extra-photo-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.extra-photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.extra-photo-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  font-size: 13px;
+}
+
+.extra-photo-add {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 2px dashed var(--border);
+  color: var(--text-dim);
+  font-size: 20px;
+  cursor: pointer;
+}
+
 .photo-capture-options {
   display: flex;
   flex-direction: column;
@@ -1228,6 +1281,48 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.post-photo-carousel {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.post-photo-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.post-photo-slide {
+  position: relative;
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
+  scroll-snap-align: start;
+}
+
+.post-photo-dots {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 5px;
+  z-index: 1;
+}
+
+.post-photo-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.post-photo-dots span.active {
+  background: #fff;
 }
 
 .post-photo-inset {

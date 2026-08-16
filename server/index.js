@@ -613,8 +613,13 @@ app.delete('/api/account', requireAuth, async (req, res) => {
     SELECT photo_filename, photo_url, inset_photo_filename, inset_photo_url
     FROM posts WHERE subject_user_id = ? OR credited_by_user_id = ?
   `).all(user.id, user.id);
+  const extraPhotos = db.prepare(`
+    SELECT pp.photo_filename, pp.photo_url FROM post_photos pp
+    JOIN posts p ON p.id = pp.post_id
+    WHERE p.subject_user_id = ? OR p.credited_by_user_id = ?
+  `).all(user.id, user.id);
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, comments, reports, blocks, group_members
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, comments, reports, blocks, group_members, post_photos
 
   deleteStoredPhoto(user.avatar_url);
 
@@ -626,6 +631,10 @@ app.delete('/api/account', requireAuth, async (req, res) => {
     if (photo.photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.photo_url));
     if (photo.inset_photo_filename) fs.unlink(path.join(uploadsDir, photo.inset_photo_filename), () => {});
     if (photo.inset_photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.inset_photo_url));
+  }
+  for (const photo of extraPhotos) {
+    fs.unlink(path.join(uploadsDir, photo.photo_filename), () => {});
+    if (photo.photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.photo_url));
   }
 
   res.json({ status: 'deleted' });
@@ -1186,6 +1195,8 @@ function serializePost(row, viewerUserId) {
   const expired = !row.saved && Date.now() - createdAtMs > POST_EXPIRY_MS;
 
   const isAnonymous = !!row.is_anonymous;
+  const extraPhotoUrls = db.prepare('SELECT photo_filename, photo_url FROM post_photos WHERE post_id = ? ORDER BY position ASC')
+    .all(row.id).map((p) => p.photo_url || `/uploads/${p.photo_filename}`);
 
   return {
     id: row.id,
@@ -1208,6 +1219,7 @@ function serializePost(row, viewerUserId) {
     saved: !!row.saved,
     photoUrl: row.photo_url || `/uploads/${row.photo_filename}`,
     insetPhotoUrl: row.inset_photo_url || (row.inset_photo_filename ? `/uploads/${row.inset_photo_filename}` : null),
+    extraPhotoUrls,
     createdAt: row.created_at,
     expiresAt: new Date(createdAtMs + POST_EXPIRY_MS).toISOString(),
     expired,
@@ -1217,16 +1229,22 @@ function serializePost(row, viewerUserId) {
   };
 }
 
-app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'insetPhoto', maxCount: 1 }]), async (req, res) => {
+// Extra carousel photos, max 4 — capped well below multer's per-file size
+// limit's blast radius, and matches what the composer UI offers.
+const MAX_EXTRA_PHOTOS = 4;
+
+app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'insetPhoto', maxCount: 1 }, { name: 'extraPhotos', maxCount: MAX_EXTRA_PHOTOS }]), async (req, res) => {
   const creditedBy = req.authUser;
   const body = req.body || {};
   const visibility = body.visibility === 'group' ? 'group' : 'public';
   const mainFile = req.files?.photo?.[0];
   const insetFile = req.files?.insetPhoto?.[0];
+  const extraFiles = req.files?.extraPhotos || [];
 
   const fail = (status, error) => {
     if (mainFile) fs.unlink(mainFile.path, () => {});
     if (insetFile) fs.unlink(insetFile.path, () => {});
+    for (const f of extraFiles) fs.unlink(f.path, () => {});
     return res.status(status).json({ error });
   };
 
@@ -1329,6 +1347,12 @@ app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'pho
     if (insetPhotoUrl) {
       db.prepare('UPDATE posts SET inset_photo_url = ? WHERE id = ?').run(insetPhotoUrl, info.lastInsertRowid);
     }
+  }
+  for (let i = 0; i < extraFiles.length; i++) {
+    const f = extraFiles[i];
+    const extraUrl = await uploadPhotoToR2(f.path, f.filename);
+    db.prepare('INSERT INTO post_photos (post_id, photo_filename, photo_url, position) VALUES (?, ?, ?, ?)')
+      .run(info.lastInsertRowid, f.filename, extraUrl || null, i);
   }
 
   // Stored as a post_credits row (awarder = poster) so existing per-post
@@ -1527,6 +1551,14 @@ app.post('/api/posts/:postId/report', requireAuth, (req, res) => {
 // 'remove'/'ban'). Unlike expirePostFromFeeds below, this always deletes the
 // row and BOTH copies of the photo (local + R2) regardless of durability,
 // since removed content must not keep surviving in someone's Memories.
+function deleteExtraPhotoFiles(postId) {
+  const extras = db.prepare('SELECT photo_filename, photo_url FROM post_photos WHERE post_id = ?').all(postId);
+  for (const p of extras) {
+    fs.unlink(path.join(uploadsDir, p.photo_filename), () => {});
+    if (p.photo_url) deletePhotoFromR2(r2KeyFromUrl(p.photo_url));
+  }
+}
+
 function deletePostAndFile(postId) {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
   if (!post) return;
@@ -1534,7 +1566,8 @@ function deletePostAndFile(postId) {
   if (post.photo_url) deletePhotoFromR2(r2KeyFromUrl(post.photo_url));
   if (post.inset_photo_filename) fs.unlink(path.join(uploadsDir, post.inset_photo_filename), () => {});
   if (post.inset_photo_url) deletePhotoFromR2(r2KeyFromUrl(post.inset_photo_url));
-  db.prepare('DELETE FROM posts WHERE id = ?').run(postId);
+  deleteExtraPhotoFiles(postId);
+  db.prepare('DELETE FROM posts WHERE id = ?').run(postId); // cascades post_photos
 }
 
 // Called by the 24h auto-expiry sweep (cleanupExpiredPosts), NOT moderation.
@@ -1548,8 +1581,11 @@ function expirePostFromFeeds(postId) {
   if (!post) return;
   fs.unlink(path.join(uploadsDir, post.photo_filename), () => {});
   if (post.inset_photo_filename) fs.unlink(path.join(uploadsDir, post.inset_photo_filename), () => {});
+  const extras = db.prepare('SELECT photo_filename, photo_url FROM post_photos WHERE post_id = ?').all(postId);
+  for (const p of extras) fs.unlink(path.join(uploadsDir, p.photo_filename), () => {});
   if (!post.photo_url) {
-    db.prepare('DELETE FROM posts WHERE id = ?').run(postId);
+    deleteExtraPhotoFiles(postId); // no durable copy of the post at all — safe to also drop the R2 extras
+    db.prepare('DELETE FROM posts WHERE id = ?').run(postId); // cascades post_photos
   }
 }
 
