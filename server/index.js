@@ -30,6 +30,9 @@ const BCRYPT_COST = 12;
 // the two-friends-mutually-inflate-each-other farming hole that a per-post
 // cap alone doesn't stop.
 const MAX_CREDIT_PER_CONTRIBUTOR = 100;
+// Selfie ("react with your face") reactions must pick one of these — keeps
+// the category meaningful, unlike the freeform plain-emoji-tap reaction.
+const REACTION_EMOJIS = ['🔥', '😂', '💀', '👑', '🐐'];
 
 const uploadsDir = path.join(__dirname, 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -618,6 +621,11 @@ app.delete('/api/account', requireAuth, async (req, res) => {
     JOIN posts p ON p.id = pp.post_id
     WHERE p.subject_user_id = ? OR p.credited_by_user_id = ?
   `).all(user.id, user.id);
+  // Selfie-reaction photos this user posted on ANYONE's posts — not just
+  // their own, since a reaction row belongs to the reactor, not the post.
+  const reactionPhotos = db.prepare(`
+    SELECT photo_filename, photo_url FROM reactions WHERE user_id = ? AND photo_filename IS NOT NULL
+  `).all(user.id);
 
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id); // cascades sessions, posts, credits, reactions, comments, reports, blocks, group_members, post_photos
 
@@ -633,6 +641,10 @@ app.delete('/api/account', requireAuth, async (req, res) => {
     if (photo.inset_photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.inset_photo_url));
   }
   for (const photo of extraPhotos) {
+    fs.unlink(path.join(uploadsDir, photo.photo_filename), () => {});
+    if (photo.photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.photo_url));
+  }
+  for (const photo of reactionPhotos) {
     fs.unlink(path.join(uploadsDir, photo.photo_filename), () => {});
     if (photo.photo_url) deletePhotoFromR2(r2KeyFromUrl(photo.photo_url));
   }
@@ -1248,8 +1260,20 @@ function creditBudgetFor(subjectUserId, contributorUserId, postId) {
 
 function serializePost(row, viewerUserId) {
   const reactions = db.prepare(`SELECT emoji, COUNT(*) as count FROM reactions WHERE post_id = ? GROUP BY emoji`).all(row.id);
+  // Selfie ("react with your face") reactions, individually — rendered as
+  // small circular photo bubbles instead of folded into the emoji counts above.
+  const reactionSelfies = db.prepare(`
+    SELECT r.emoji, r.photo_filename, r.photo_url, u.username FROM reactions r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.post_id = ? AND r.photo_filename IS NOT NULL
+    ORDER BY r.created_at ASC
+  `).all(row.id).map((r) => ({
+    emoji: r.emoji,
+    username: r.username,
+    photoUrl: r.photo_url || `/uploads/${r.photo_filename}`,
+  }));
   const myReaction = viewerUserId
-    ? db.prepare(`SELECT emoji FROM reactions WHERE post_id = ? AND user_id = ?`).get(row.id, viewerUserId)
+    ? db.prepare(`SELECT emoji, photo_filename FROM reactions WHERE post_id = ? AND user_id = ?`).get(row.id, viewerUserId)
     : null;
   const comments = db.prepare(`
     SELECT c.id, c.body, c.created_at, u.username FROM comments c
@@ -1311,7 +1335,9 @@ function serializePost(row, viewerUserId) {
     expiresAt: new Date(createdAtMs + POST_EXPIRY_MS).toISOString(),
     expired,
     reactions,
+    reactionSelfies,
     myReaction: myReaction ? myReaction.emoji : null,
+    myReactionIsSelfie: !!(myReaction && myReaction.photo_filename),
     comments,
   };
 }
@@ -1618,6 +1644,15 @@ app.get('/api/groups/:groupId/feed', requireAuth, (req, res) => {
   res.json(posts);
 });
 
+// Frees an existing reaction's selfie file (local + R2), if it had one —
+// shared by the plain emoji-tap route (toggling off/overwriting a selfie
+// reaction) and the selfie route itself (replacing a previous selfie).
+function deleteSingleReactionPhoto(reactionRow) {
+  if (!reactionRow || !reactionRow.photo_filename) return;
+  fs.unlink(path.join(uploadsDir, reactionRow.photo_filename), () => {});
+  if (reactionRow.photo_url) deletePhotoFromR2(r2KeyFromUrl(reactionRow.photo_url));
+}
+
 app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
@@ -1632,11 +1667,47 @@ app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
 
   const existing = db.prepare('SELECT * FROM reactions WHERE post_id = ? AND user_id = ?').get(post.id, user.id);
   if (existing && existing.emoji === emoji) {
+    deleteSingleReactionPhoto(existing); // toggling off — was this a selfie reaction? clean up its photo
     db.prepare('DELETE FROM reactions WHERE id = ?').run(existing.id);
   } else if (existing) {
-    db.prepare('UPDATE reactions SET emoji = ? WHERE id = ?').run(emoji, existing.id);
+    deleteSingleReactionPhoto(existing); // switching to a different plain emoji drops any selfie they'd attached
+    db.prepare('UPDATE reactions SET emoji = ?, photo_filename = NULL, photo_url = NULL WHERE id = ?').run(emoji, existing.id);
   } else {
     db.prepare('INSERT INTO reactions (post_id, user_id, emoji) VALUES (?, ?, ?)').run(post.id, user.id, emoji);
+  }
+
+  res.json(serializePost(getPostRow(post.id), user.id));
+});
+
+// "React with your face" (BeReal-style RealMoji) — same one-reaction-per-post
+// slot as the plain emoji tap above, just fulfilled with a selfie instead.
+app.post('/api/posts/:postId/react-selfie', requireAuth, requireVerified, upload.single('photo'), async (req, res) => {
+  const user = req.authUser;
+  const file = req.file;
+  const fail = (status, error) => {
+    if (file) fs.unlink(file.path, () => {});
+    return res.status(status).json({ error });
+  };
+
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
+  if (!post) return fail(404, 'Post not found');
+  if (post.visibility === 'group' && !isGroupMember(post.group_id, user.id)) {
+    return fail(403, "You're not in that group");
+  }
+  const emoji = ((req.body || {}).emoji || '').trim();
+  if (!REACTION_EMOJIS.includes(emoji)) return fail(400, 'Not a valid reaction category');
+  if (!file) return fail(400, 'A photo is required');
+
+  const existing = db.prepare('SELECT * FROM reactions WHERE post_id = ? AND user_id = ?').get(post.id, user.id);
+  deleteSingleReactionPhoto(existing); // replacing any previous reaction's selfie (if it had one)
+
+  const photoUrl = await uploadPhotoToR2(file.path, file.filename);
+  if (existing) {
+    db.prepare('UPDATE reactions SET emoji = ?, photo_filename = ?, photo_url = ? WHERE id = ?')
+      .run(emoji, file.filename, photoUrl || null, existing.id);
+  } else {
+    db.prepare('INSERT INTO reactions (post_id, user_id, emoji, photo_filename, photo_url) VALUES (?, ?, ?, ?, ?)')
+      .run(post.id, user.id, emoji, file.filename, photoUrl || null);
   }
 
   res.json(serializePost(getPostRow(post.id), user.id));
@@ -1695,6 +1766,14 @@ function deleteExtraPhotoFiles(postId) {
   }
 }
 
+function deleteReactionPhotoFiles(postId) {
+  const reacts = db.prepare('SELECT photo_filename, photo_url FROM reactions WHERE post_id = ? AND photo_filename IS NOT NULL').all(postId);
+  for (const r of reacts) {
+    fs.unlink(path.join(uploadsDir, r.photo_filename), () => {});
+    if (r.photo_url) deletePhotoFromR2(r2KeyFromUrl(r.photo_url));
+  }
+}
+
 function deletePostAndFile(postId) {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
   if (!post) return;
@@ -1703,7 +1782,8 @@ function deletePostAndFile(postId) {
   if (post.inset_photo_filename) fs.unlink(path.join(uploadsDir, post.inset_photo_filename), () => {});
   if (post.inset_photo_url) deletePhotoFromR2(r2KeyFromUrl(post.inset_photo_url));
   deleteExtraPhotoFiles(postId);
-  db.prepare('DELETE FROM posts WHERE id = ?').run(postId); // cascades post_photos
+  deleteReactionPhotoFiles(postId);
+  db.prepare('DELETE FROM posts WHERE id = ?').run(postId); // cascades post_photos, reactions
 }
 
 // Called by the 24h auto-expiry sweep (cleanupExpiredPosts), NOT moderation.
@@ -1719,9 +1799,12 @@ function expirePostFromFeeds(postId) {
   if (post.inset_photo_filename) fs.unlink(path.join(uploadsDir, post.inset_photo_filename), () => {});
   const extras = db.prepare('SELECT photo_filename, photo_url FROM post_photos WHERE post_id = ?').all(postId);
   for (const p of extras) fs.unlink(path.join(uploadsDir, p.photo_filename), () => {});
+  const reacts = db.prepare('SELECT photo_filename, photo_url FROM reactions WHERE post_id = ? AND photo_filename IS NOT NULL').all(postId);
+  for (const r of reacts) fs.unlink(path.join(uploadsDir, r.photo_filename), () => {});
   if (!post.photo_url) {
-    deleteExtraPhotoFiles(postId); // no durable copy of the post at all — safe to also drop the R2 extras
-    db.prepare('DELETE FROM posts WHERE id = ?').run(postId); // cascades post_photos
+    deleteExtraPhotoFiles(postId); // no durable copy of the post at all — safe to also drop the R2 extras/reaction selfies
+    deleteReactionPhotoFiles(postId);
+    db.prepare('DELETE FROM posts WHERE id = ?').run(postId); // cascades post_photos, reactions
   }
 }
 

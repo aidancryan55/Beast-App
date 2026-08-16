@@ -143,11 +143,15 @@ db.exec(`
     UNIQUE(post_id, awarder_user_id)
   );
 
+  -- photo_filename/photo_url are set only for "react with your face" selfie
+  -- reactions (BeReal-style RealMoji) — null for a plain emoji tap.
   CREATE TABLE IF NOT EXISTS reactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     emoji TEXT NOT NULL,
+    photo_filename TEXT,
+    photo_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(post_id, user_id)
   );
@@ -399,6 +403,14 @@ if (postCols.length) {
       WHERE points IS NOT NULL
     `);
   }
+}
+
+const reactionCols = db.prepare('PRAGMA table_info(reactions)').all().map((c) => c.name);
+if (!reactionCols.includes('photo_filename')) {
+  db.exec('ALTER TABLE reactions ADD COLUMN photo_filename TEXT');
+}
+if (!reactionCols.includes('photo_url')) {
+  db.exec('ALTER TABLE reactions ADD COLUMN photo_url TEXT');
 }
 
 const postCreditCols = db.prepare('PRAGMA table_info(post_credits)').all().map((c) => c.name);

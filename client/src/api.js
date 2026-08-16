@@ -95,6 +95,12 @@ export const api = {
     return reqForm('/posts', form);
   },
   reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),
+  reactWithSelfie: (postId, emoji, photoBlob) => {
+    const form = new FormData();
+    form.append('emoji', emoji);
+    form.append('photo', photoBlob, 'reaction.jpg');
+    return reqForm(`/posts/${postId}/react-selfie`, form);
+  },
   commentOnPost: (postId, body) => req(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
   savePost: (postId) => req(`/posts/${postId}/save`, { method: 'POST' }),
   creditPost: (postId, points, subjectUsername) => req(`/posts/${postId}/credit`, { method: 'POST', body: JSON.stringify({ points, subjectUsername }) }),

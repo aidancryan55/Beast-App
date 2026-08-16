@@ -1104,6 +1104,128 @@ function CustomReaction({ post, onReact }) {
   );
 }
 
+// BeReal-style "RealMoji" — react with a selfie making the expression
+// instead of just tapping the emoji. Same one-reaction-per-post slot as the
+// plain taps in the row above; picking a category here just fulfills it
+// with a photo instead.
+function SelfieReactionButton({ post, onReactWithSelfie }) {
+  const [phase, setPhase] = useState('closed'); // 'closed' | 'pick' | 'camera' | 'review'
+  const [emoji, setEmoji] = useState('');
+  const [photoBlob, setPhotoBlob] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  useHideNavWhileOpen(phase !== 'closed');
+
+  function stopStream() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }
+
+  function reset() {
+    stopStream();
+    setPhase('closed');
+    setEmoji('');
+    setPhotoBlob(null);
+    setPreviewUrl('');
+    setError('');
+  }
+
+  async function pickEmoji(chosen) {
+    setEmoji(chosen);
+    setError('');
+    try {
+      const stream = await getCameraStream('user');
+      streamRef.current = stream;
+      setPhase('camera');
+    } catch {
+      setError("Couldn't access your camera.");
+    }
+  }
+
+  useEffect(() => {
+    if (phase === 'camera' && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play();
+    }
+  }, [phase]);
+
+  function shoot() {
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    stopStream();
+    canvas.toBlob((blob) => {
+      setPhotoBlob(blob);
+      setPreviewUrl(URL.createObjectURL(blob));
+      setPhase('review');
+    }, 'image/jpeg', 0.88);
+  }
+
+  async function submit() {
+    setSubmitting(true);
+    setError('');
+    try {
+      await onReactWithSelfie(post.id, emoji, photoBlob);
+      reset();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (phase === 'closed') {
+    return (
+      <button type="button" className="photo-reaction-btn selfie-reaction-trigger" onClick={() => setPhase('pick')} aria-label="React with your face">
+        🤳
+      </button>
+    );
+  }
+
+  return (
+    <div className="credit-modal-backdrop" onClick={reset}>
+      <div className="credit-modal selfie-reaction-modal" onClick={(e) => e.stopPropagation()}>
+        <h2>React with your face</h2>
+        {error && <p className="error">{error}</p>}
+        {phase === 'pick' && (
+          <div className="selfie-emoji-pick">
+            {REACTION_EMOJIS.map((e) => (
+              <button type="button" key={e} className="selfie-emoji-option" onClick={() => pickEmoji(e)}>{e}</button>
+            ))}
+          </div>
+        )}
+        {phase === 'camera' && (
+          <div className="dual-capture">
+            <video ref={videoRef} className="dual-capture-video mirrored" playsInline muted autoPlay />
+            <p className="dual-capture-hint">Make your best {emoji} face</p>
+            <div className="dual-capture-actions">
+              <button type="button" className="secondary-btn" onClick={reset}>Cancel</button>
+              <button type="button" className="shutter-btn" onClick={shoot} aria-label="Capture" />
+            </div>
+          </div>
+        )}
+        {phase === 'review' && (
+          <div className="dual-capture">
+            <div className="dual-review-frame">
+              <img src={previewUrl} alt="" className="dual-review-main" />
+              <span className="selfie-review-badge">{emoji}</span>
+            </div>
+            <div className="dual-capture-actions">
+              <button type="button" className="secondary-btn" onClick={() => pickEmoji(emoji)}>Retake</button>
+              <button type="button" className="dual-capture-btn" onClick={submit} disabled={submitting}>{submitting ? 'Posting…' : 'Post it'}</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CommentsSection({ post, onComment }) {
   const [body, setBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -1142,10 +1264,11 @@ function CommentsSection({ post, onComment }) {
   );
 }
 
-function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile }) {
+function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapped, setSwapped] = useState(false); // tap-to-swap which shot is on top, purely local to this viewer
   const [activeSlide, setActiveSlide] = useState(0);
+  const [lightboxSelfie, setLightboxSelfie] = useState(null);
   const hasCarousel = post.extraPhotoUrls && post.extraPhotoUrls.length > 0;
 
   function handleCarouselScroll(e) {
@@ -1270,8 +1393,30 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
             );
           })}
           <CustomReaction post={post} onReact={onReact} />
+          <SelfieReactionButton post={post} onReactWithSelfie={onReactWithSelfie} />
         </div>
       </div>
+
+      {post.reactionSelfies && post.reactionSelfies.length > 0 && (
+        <div className="reaction-selfies-row">
+          {post.reactionSelfies.map((r, i) => (
+            <button type="button" key={i} className="reaction-selfie-bubble" onClick={() => setLightboxSelfie(r)}>
+              <img src={r.photoUrl} alt="" />
+              <span className="reaction-selfie-badge">{r.emoji}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {lightboxSelfie && (
+        <div className="selfie-lightbox-backdrop" onClick={() => setLightboxSelfie(null)}>
+          <div className="selfie-lightbox" onClick={(e) => e.stopPropagation()}>
+            <img src={lightboxSelfie.photoUrl} alt="" />
+            <p className="selfie-lightbox-caption">{lightboxSelfie.emoji} {lightboxSelfie.username}</p>
+            <button type="button" className="secondary-btn" onClick={() => setLightboxSelfie(null)}>Close</button>
+          </div>
+        </div>
+      )}
 
       <div className="post-card-footer">
         {post.creditorCount > 1 && <span className="post-creditors">{post.creditorCount} chipped in</span>}
@@ -1288,18 +1433,18 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
   );
 }
 
-function PostList({ posts, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile, emptyText }) {
+function PostList({ posts, currentUsername, onReact, onReactWithSelfie, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile, emptyText }) {
   if (!posts.length) return <div className="empty-state">{emptyText}</div>;
   return (
     <div className="post-list">
       {posts.map((post) => (
-        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} onMute={onMute} onOpenProfile={onOpenProfile} />
+        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onReactWithSelfie={onReactWithSelfie} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} onMute={onMute} onOpenProfile={onOpenProfile} />
       ))}
     </div>
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, showComposer, onCloseComposer }) {
+function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onReactWithSelfie, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, showComposer, onCloseComposer }) {
   useHideNavWhileOpen(showComposer);
   return (
     <div className="feed-view">
@@ -1317,6 +1462,7 @@ function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, o
         posts={discoverFeed}
         currentUsername={currentUsername}
         onReact={onReact}
+        onReactWithSelfie={onReactWithSelfie}
         onComment={onComment}
         onSave={onSave}
         onCredit={onCredit}
@@ -1448,7 +1594,7 @@ function GroupRequestsSection({ groupId, onApprovedOrDeclined }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, onRefreshGroup }) {
+function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onReactWithSelfie, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, onRefreshGroup }) {
   const [showForm, setShowForm] = useState(false);
   useHideNavWhileOpen(showForm);
   return (
@@ -1482,6 +1628,7 @@ function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSub
         posts={groupFeed}
         currentUsername={currentUsername}
         onReact={onReact}
+        onReactWithSelfie={onReactWithSelfie}
         onComment={onComment}
         onSave={onSave}
         onCredit={onCredit}
@@ -2734,6 +2881,13 @@ export default function App() {
     });
   }
 
+  async function handleReactWithSelfie(postId, emoji, photoBlob) {
+    await withAuthGuard(async () => {
+      await api.reactWithSelfie(postId, emoji, photoBlob);
+      await refreshVisibleFeeds();
+    });
+  }
+
   async function handleComment(postId, body) {
     await withAuthGuard(async () => {
       await api.commentOnPost(postId, body);
@@ -2931,6 +3085,7 @@ export default function App() {
             currentUsername={displayName}
             onSubmitPost={handleSubmitPost}
             onReact={handleReact}
+            onReactWithSelfie={handleReactWithSelfie}
             onComment={handleComment}
             onSave={handleSavePost}
             onCredit={handleCreditPost}
@@ -2964,6 +3119,7 @@ export default function App() {
             onLeave={handleLeaveGroup}
             onSubmitPost={handleSubmitPost}
             onReact={handleReact}
+            onReactWithSelfie={handleReactWithSelfie}
             onComment={handleComment}
             onSave={handleSavePost}
             onCredit={handleCreditPost}
