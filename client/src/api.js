@@ -102,6 +102,10 @@ export const api = {
   blockUser: (targetUsername) => req('/users/_/block', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
   unblockUser: (targetUsername) => req('/users/_/unblock', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
 
+  getMutedUsers: () => req('/users/_/muted'),
+  muteUser: (targetUsername) => req('/users/_/mute', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
+  unmuteUser: (targetUsername) => req('/users/_/unmute', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
+
   getPublicProfile: (username) => req(`/users/${encodeURIComponent(username)}/public-profile`),
   getFriends: () => req('/me/friends'),
   getFriendSuggestions: () => req('/me/friend-suggestions'),

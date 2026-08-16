@@ -813,6 +813,33 @@ app.post('/api/users/:username/unblock', requireAuth, (req, res) => {
   res.json({ status: 'unblocked' });
 });
 
+// --- Muting (soft, silent, one-directional — see mutes table comment in db.js) ---
+function getMutedUserIds(userId) {
+  return db.prepare('SELECT muted_user_id FROM mutes WHERE muter_user_id = ?').all(userId).map((r) => r.muted_user_id);
+}
+
+app.get('/api/users/:username/muted', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.username FROM mutes m JOIN users u ON u.id = m.muted_user_id WHERE m.muter_user_id = ?
+  `).all(req.authUser.id);
+  res.json(rows.map((r) => r.username));
+});
+
+app.post('/api/users/:username/mute', requireAuth, (req, res) => {
+  const target = getUserByUsername((req.body || {}).targetUsername);
+  if (!target) return res.status(404).json({ error: 'That user does not exist' });
+  if (target.id === req.authUser.id) return res.status(400).json({ error: "You can't mute yourself" });
+  db.prepare('INSERT OR IGNORE INTO mutes (muter_user_id, muted_user_id) VALUES (?, ?)').run(req.authUser.id, target.id);
+  res.json({ status: 'muted' });
+});
+
+app.post('/api/users/:username/unmute', requireAuth, (req, res) => {
+  const target = getUserByUsername((req.body || {}).targetUsername);
+  if (!target) return res.status(404).json({ error: 'That user does not exist' });
+  db.prepare('DELETE FROM mutes WHERE muter_user_id = ? AND muted_user_id = ?').run(req.authUser.id, target.id);
+  res.json({ status: 'unmuted' });
+});
+
 // --- Friends ---
 // Reuses the `friendships` table that's been in the schema since the old
 // friend-graph feature, but was unused after that feature was replaced by
@@ -1390,6 +1417,7 @@ app.get('/api/users/:username/discover', (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const hidden = new Set(getHiddenUserIds(user.id));
+  const muted = new Set(getMutedUserIds(user.id));
   const rows = db.prepare(`
     ${POST_JOIN_SQL}
     WHERE p.visibility = 'public'
@@ -1401,7 +1429,7 @@ app.get('/api/users/:username/discover', (req, res) => {
   // sort is stable, so equal-point posts still fall back to newest-first
   // since that's the order they arrived in from the query above.
   const posts = rows
-    .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id))
+    .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id) && !muted.has(r.credited_by_user_id))
     .map((r) => serializePost(r, user.id))
     .filter((p) => !p.expired)
     .sort((a, b) => b.points - a.points);
@@ -1415,6 +1443,7 @@ app.get('/api/groups/:groupId/feed', requireAuth, (req, res) => {
   if (!isGroupMember(group.id, req.authUser.id)) return res.status(403).json({ error: "You're not in that group" });
 
   const hidden = new Set(getHiddenUserIds(req.authUser.id));
+  const muted = new Set(getMutedUserIds(req.authUser.id));
   const rows = db.prepare(`
     ${POST_JOIN_SQL}
     WHERE p.visibility = 'group' AND p.group_id = ?
@@ -1423,7 +1452,7 @@ app.get('/api/groups/:groupId/feed', requireAuth, (req, res) => {
   `).all(group.id);
 
   const posts = rows
-    .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id))
+    .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id) && !muted.has(r.credited_by_user_id))
     .map((r) => serializePost(r, req.authUser.id))
     .filter((p) => !p.expired);
   res.json(posts);

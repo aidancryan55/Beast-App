@@ -161,6 +161,17 @@ db.exec(`
     UNIQUE(blocker_user_id, blocked_user_id)
   );
 
+  -- Soft, one-directional, silent hide: unlike blocks (mutual, prevents
+  -- interaction), muting just stops showing the muted person's posts in your
+  -- own feeds. They're never notified and can still friend/credit/comment on you.
+  CREATE TABLE IF NOT EXISTS mutes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    muter_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    muted_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(muter_user_id, muted_user_id)
+  );
+
   -- Persistent points record, independent of posts/photos. posts.* rows
   -- (and post_credits with them, via its own ON DELETE CASCADE) are ephemeral
   -- and vanish 24h after posting unless saved — this table is the durable

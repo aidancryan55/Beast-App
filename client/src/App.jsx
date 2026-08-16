@@ -1030,7 +1030,7 @@ function CommentsSection({ post, onComment }) {
   );
 }
 
-function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onOpenProfile }) {
+function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapped, setSwapped] = useState(false); // tap-to-swap which shot is on top, purely local to this viewer
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
@@ -1070,9 +1070,14 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
           <div className="post-menu-dropdown">
             <ReportButton post={post} onReport={onReport} />
             {!isPoster && !post.isAnonymous && (
-              <button type="button" className="flag-btn" onClick={() => onBlock(post.creditedByUsername)}>
-                Block {post.creditedByUsername}
-              </button>
+              <>
+                <button type="button" className="flag-btn" onClick={() => onMute(post.creditedByUsername)}>
+                  Mute {post.creditedByUsername}
+                </button>
+                <button type="button" className="flag-btn" onClick={() => onBlock(post.creditedByUsername)}>
+                  Block {post.creditedByUsername}
+                </button>
+              </>
             )}
           </div>
         )}
@@ -1127,18 +1132,18 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
   );
 }
 
-function PostList({ posts, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onOpenProfile, emptyText }) {
+function PostList({ posts, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile, emptyText }) {
   if (!posts.length) return <div className="empty-state">{emptyText}</div>;
   return (
     <div className="post-list">
       {posts.map((post) => (
-        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} onOpenProfile={onOpenProfile} />
+        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} onMute={onMute} onOpenProfile={onOpenProfile} />
       ))}
     </div>
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onOpenProfile, showComposer, onCloseComposer }) {
+function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, showComposer, onCloseComposer }) {
   return (
     <div className="feed-view">
       {showComposer && (
@@ -1160,6 +1165,7 @@ function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, o
         onCredit={onCredit}
         onReport={onReport}
         onBlock={onBlock}
+        onMute={onMute}
         onOpenProfile={onOpenProfile}
         emptyText="No public posts yet — be the first to catch someone being a beast."
       />
@@ -1285,7 +1291,7 @@ function GroupRequestsSection({ groupId, onApprovedOrDeclined }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onOpenProfile, onRefreshGroup }) {
+function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, onRefreshGroup }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="group-detail">
@@ -1323,6 +1329,7 @@ function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSub
         onCredit={onCredit}
         onReport={onReport}
         onBlock={onBlock}
+        onMute={onMute}
         onOpenProfile={onOpenProfile}
         emptyText="No posts in this group yet."
       />
@@ -2074,7 +2081,7 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
   );
 }
 
-function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, onDeleteAccount, avatarUrl, onAvatarUpdated, onBack }) {
+function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, mutedUsers, onUnmute, onDeleteAccount, avatarUrl, onAvatarUpdated, onBack }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
@@ -2139,6 +2146,18 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
           <div key={u} className="friend-row">
             <span>{u}</span>
             <button className="friend-action" onClick={() => onUnblock(u)}>Unblock</button>
+          </div>
+        ))}
+      </section>
+
+      <section className="friend-section">
+        <h2>Muted accounts</h2>
+        <p className="fineprint">Muting hides someone's posts from your feeds without blocking them or letting them know.</p>
+        {mutedUsers.length === 0 && <div className="empty-state">You haven't muted anyone.</div>}
+        {mutedUsers.map((u) => (
+          <div key={u} className="friend-row">
+            <span>{u}</span>
+            <button className="friend-action" onClick={() => onUnmute(u)}>Unmute</button>
           </div>
         ))}
       </section>
@@ -2221,6 +2240,7 @@ export default function App() {
   const [activeGroupId, setActiveGroupId] = useState(null);
   const [groupFeed, setGroupFeed] = useState([]);
   const [blockedUsers, setBlockedUsers] = useState([]);
+  const [mutedUsers, setMutedUsers] = useState([]);
   const [adminReports, setAdminReports] = useState([]);
   const [memories, setMemories] = useState([]);
   const [tab, setTab] = useState('discover');
@@ -2473,6 +2493,25 @@ export default function App() {
     });
   }
 
+  async function refreshMutedUsers() {
+    setMutedUsers(await api.getMutedUsers());
+  }
+
+  async function handleMuteUser(targetUsername) {
+    await withAuthGuard(async () => {
+      await api.muteUser(targetUsername);
+      await refreshVisibleFeeds();
+      await refreshMutedUsers();
+    });
+  }
+
+  async function handleUnmuteUser(targetUsername) {
+    await withAuthGuard(async () => {
+      await api.unmuteUser(targetUsername);
+      await refreshMutedUsers();
+    });
+  }
+
   async function handleDeleteAccount(password) {
     await api.deleteAccount(password);
     localStorage.removeItem('ccq_auth');
@@ -2500,7 +2539,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (tab === 'settings') refreshBlockedUsers();
+    if (tab === 'settings') { refreshBlockedUsers(); refreshMutedUsers(); }
     if ((tab === 'admin' || tab === 'settings') && isAdmin) refreshAdminReports();
     if (tab === 'memories') refreshMemories();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2562,6 +2601,7 @@ export default function App() {
             onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
             onBlock={handleBlockUser}
+            onMute={handleMuteUser}
             onOpenProfile={openProfile}
             showComposer={showComposer}
             onCloseComposer={() => setShowComposer(false)}
@@ -2593,6 +2633,7 @@ export default function App() {
             onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
             onBlock={handleBlockUser}
+            onMute={handleMuteUser}
             onOpenProfile={openProfile}
             onRefreshGroup={refreshGroups}
           />
@@ -2628,6 +2669,8 @@ export default function App() {
             onSearchUsers={handleSearchUsers}
             blockedUsers={blockedUsers}
             onUnblock={handleUnblockUser}
+            mutedUsers={mutedUsers}
+            onUnmute={handleUnmuteUser}
             onDeleteAccount={handleDeleteAccount}
             avatarUrl={auth.avatarUrl}
             onAvatarUpdated={handleAvatarUpdated}
