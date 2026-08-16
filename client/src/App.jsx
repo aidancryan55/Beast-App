@@ -1105,11 +1105,14 @@ function CustomReaction({ post, onReact }) {
 }
 
 // BeReal-style "RealMoji" — react with a selfie making the expression
-// instead of just tapping the emoji. Same one-reaction-per-post slot as the
-// plain taps in the row above; picking a category here just fulfills it
-// with a photo instead.
+// instead of just tapping the emoji. Your photo for a category is saved
+// once and reused every time after that: picking a category you've already
+// set a face for reacts instantly (no camera), picking a new one opens the
+// camera and saves what you capture as your face for that category from
+// now on. Same one-reaction-per-post slot as the plain taps in the row above.
 function SelfieReactionButton({ post, onReactWithSelfie }) {
   const [phase, setPhase] = useState('closed'); // 'closed' | 'pick' | 'camera' | 'review'
+  const [myPhotos, setMyPhotos] = useState(null); // {emoji: photoUrl}, fetched on open
   const [emoji, setEmoji] = useState('');
   const [photoBlob, setPhotoBlob] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -1133,7 +1136,16 @@ function SelfieReactionButton({ post, onReactWithSelfie }) {
     setError('');
   }
 
-  async function pickEmoji(chosen) {
+  async function open() {
+    setPhase('pick');
+    try {
+      setMyPhotos(await api.getMyReactionPhotos());
+    } catch {
+      setMyPhotos({});
+    }
+  }
+
+  async function openCamera(chosen) {
     setEmoji(chosen);
     setError('');
     try {
@@ -1143,6 +1155,24 @@ function SelfieReactionButton({ post, onReactWithSelfie }) {
     } catch {
       setError("Couldn't access your camera.");
     }
+  }
+
+  async function pickEmoji(chosen) {
+    if (myPhotos && myPhotos[chosen]) {
+      // Already have a saved face for this one — react instantly, no camera.
+      setEmoji(chosen);
+      setSubmitting(true);
+      setError('');
+      try {
+        await onReactWithSelfie(post.id, chosen, null);
+        reset();
+      } catch (err) {
+        setError(err.message);
+        setSubmitting(false);
+      }
+      return;
+    }
+    await openCamera(chosen);
   }
 
   useEffect(() => {
@@ -1181,7 +1211,7 @@ function SelfieReactionButton({ post, onReactWithSelfie }) {
 
   if (phase === 'closed') {
     return (
-      <button type="button" className="photo-reaction-btn selfie-reaction-trigger" onClick={() => setPhase('pick')} aria-label="React with your face">
+      <button type="button" className="photo-reaction-btn selfie-reaction-trigger" onClick={open} aria-label="React with your face">
         🤳
       </button>
     );
@@ -1195,14 +1225,19 @@ function SelfieReactionButton({ post, onReactWithSelfie }) {
         {phase === 'pick' && (
           <div className="selfie-emoji-pick">
             {REACTION_EMOJIS.map((e) => (
-              <button type="button" key={e} className="selfie-emoji-option" onClick={() => pickEmoji(e)}>{e}</button>
+              <button type="button" key={e} className="selfie-emoji-option" disabled={submitting} onClick={() => pickEmoji(e)}>
+                {myPhotos && myPhotos[e] ? (
+                  <img src={myPhotos[e]} alt="" className="selfie-emoji-option-photo" />
+                ) : e}
+                <span className="selfie-emoji-option-badge">{e}</span>
+              </button>
             ))}
           </div>
         )}
         {phase === 'camera' && (
           <div className="dual-capture">
             <video ref={videoRef} className="dual-capture-video mirrored" playsInline muted autoPlay />
-            <p className="dual-capture-hint">Make your best {emoji} face</p>
+            <p className="dual-capture-hint">Make your best {emoji} face — this becomes your {emoji} reaction from now on</p>
             <div className="dual-capture-actions">
               <button type="button" className="secondary-btn" onClick={reset}>Cancel</button>
               <button type="button" className="shutter-btn" onClick={shoot} aria-label="Capture" />
@@ -1216,7 +1251,7 @@ function SelfieReactionButton({ post, onReactWithSelfie }) {
               <span className="selfie-review-badge">{emoji}</span>
             </div>
             <div className="dual-capture-actions">
-              <button type="button" className="secondary-btn" onClick={() => pickEmoji(emoji)}>Retake</button>
+              <button type="button" className="secondary-btn" onClick={() => openCamera(emoji)}>Retake</button>
               <button type="button" className="dual-capture-btn" onClick={submit} disabled={submitting}>{submitting ? 'Posting…' : 'Post it'}</button>
             </div>
           </div>

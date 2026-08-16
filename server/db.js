@@ -143,17 +143,28 @@ db.exec(`
     UNIQUE(post_id, awarder_user_id)
   );
 
-  -- photo_filename/photo_url are set only for "react with your face" selfie
-  -- reactions (BeReal-style RealMoji) — null for a plain emoji tap.
   CREATE TABLE IF NOT EXISTS reactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     emoji TEXT NOT NULL,
-    photo_filename TEXT,
-    photo_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(post_id, user_id)
+  );
+
+  -- BeReal-style "RealMoji" — one saved selfie per emoji category, set up
+  -- once and reused for every future reaction with that emoji (not stored
+  -- per-reaction). Reacting with a category you've set a photo for is what
+  -- makes reactions.emoji resolve to a face instead of a plain tally in
+  -- serializePost's reactionSelfies join — see index.js.
+  CREATE TABLE IF NOT EXISTS user_reaction_photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    photo_filename TEXT NOT NULL,
+    photo_url TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, emoji)
   );
 
   CREATE TABLE IF NOT EXISTS comments (

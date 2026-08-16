@@ -95,12 +95,17 @@ export const api = {
     return reqForm('/posts', form);
   },
   reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),
+  // photoBlob is only needed the first time you use a given emoji category
+  // (or to update it) — after that your saved photo for it is reused, so
+  // this can be called with just the emoji.
   reactWithSelfie: (postId, emoji, photoBlob) => {
     const form = new FormData();
     form.append('emoji', emoji);
-    form.append('photo', photoBlob, 'reaction.jpg');
+    if (photoBlob) form.append('photo', photoBlob, 'reaction.jpg');
     return reqForm(`/posts/${postId}/react-selfie`, form);
   },
+  getMyReactionPhotos: () => req('/me/reaction-photos'),
+  removeReactionPhoto: (emoji) => req(`/me/reaction-photos/${encodeURIComponent(emoji)}`, { method: 'DELETE' }),
   commentOnPost: (postId, body) => req(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
   savePost: (postId) => req(`/posts/${postId}/save`, { method: 'POST' }),
   creditPost: (postId, points, subjectUsername) => req(`/posts/${postId}/credit`, { method: 'POST', body: JSON.stringify({ points, subjectUsername }) }),
