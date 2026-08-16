@@ -67,6 +67,27 @@ db.exec(`
     UNIQUE(requester_id, addressee_id)
   );
 
+  -- 1:1 DMs, friends-only. user_a_id is always the lower of the two ids
+  -- (enforced in index.js at creation) so there's exactly one conversation
+  -- row per pair regardless of who messaged first.
+  CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_a_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_b_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_a_id, user_b_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    read_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
+
   CREATE TABLE IF NOT EXISTS posts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -117,6 +117,10 @@ export const api = {
   cancelFriendRequest: (requestId) => req(`/friends/requests/${requestId}`, { method: 'DELETE' }),
   removeFriend: (username) => req(`/friends/${encodeURIComponent(username)}`, { method: 'DELETE' }),
 
+  getConversations: () => req('/conversations'),
+  getMessages: (username) => req(`/conversations/${encodeURIComponent(username)}/messages`),
+  sendMessage: (username, body) => req(`/conversations/${encodeURIComponent(username)}/messages`, { method: 'POST', body: JSON.stringify({ body }) }),
+
   deleteAccount: (password) => req('/account', { method: 'DELETE', body: JSON.stringify({ password }) }),
 
   getAdminReports: () => req('/admin/reports'),

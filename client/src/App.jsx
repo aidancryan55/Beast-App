@@ -60,6 +60,14 @@ function IconCamera(props) {
     </svg>
   );
 }
+function IconMessage(props) {
+  return (
+    <svg {...iconProps} {...props}>
+      <path d="M3 12a8 8 0 1 1 3.4 6.55L3 20l1.35-3.6A7.96 7.96 0 0 1 3 12Z" />
+    </svg>
+  );
+}
+
 function IconSettings(props) {
   return (
     <svg {...iconProps} {...props}>
@@ -1811,7 +1819,7 @@ function DaresSection({ onSearchUsers }) {
   );
 }
 
-function FriendsView({ onBack, onSearchUsers, onOpenProfile }) {
+function FriendsView({ onBack, onSearchUsers, onOpenProfile, onOpenMessage }) {
   const [friends, setFriends] = useState(null); // null = still loading
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
   const [suggestions, setSuggestions] = useState([]);
@@ -1950,7 +1958,10 @@ function FriendsView({ onBack, onSearchUsers, onOpenProfile }) {
         {friends.map((f) => (
           <div key={f.username} className="friend-row">
             <button type="button" className="friend-row-name" onClick={() => onOpenProfile(f.username)}>{f.username}</button>
-            <button className="friend-action remove" onClick={() => remove(f.username)}>Remove</button>
+            <div className="friend-row-actions">
+              <button className="friend-action" onClick={() => onOpenMessage(f.username)}>Message</button>
+              <button className="friend-action remove" onClick={() => remove(f.username)}>Remove</button>
+            </div>
           </div>
         ))}
       </section>
@@ -1958,7 +1969,112 @@ function FriendsView({ onBack, onSearchUsers, onOpenProfile }) {
   );
 }
 
-function PublicProfileView({ username, onBack, onFriendChanged }) {
+function ConversationsListView({ onBack, onOpenMessage }) {
+  const [conversations, setConversations] = useState(null);
+
+  async function refresh() {
+    setConversations(await api.getConversations());
+  }
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (conversations === null) return null;
+
+  return (
+    <div className="memories-view">
+      <div className="memories-header">
+        <button type="button" className="memories-back" onClick={onBack} aria-label="Back">←</button>
+        <h2>Messages</h2>
+      </div>
+      {conversations.length === 0 && <div className="empty-state">No conversations yet — message a friend to start one.</div>}
+      {conversations.map((c) => (
+        <button type="button" key={c.username} className="conversation-row" onClick={() => onOpenMessage(c.username)}>
+          <span className="conversation-avatar">
+            {c.avatarUrl ? <img src={c.avatarUrl} alt="" /> : c.username.charAt(0).toUpperCase()}
+          </span>
+          <span className="conversation-info">
+            <span className="conversation-name">{c.username}</span>
+            <span className="conversation-preview">{c.lastBody}</span>
+          </span>
+          {c.unread > 0 && <span className="conversation-unread">{c.unread}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DMThreadView({ username, onBack }) {
+  const [messages, setMessages] = useState(null);
+  const [body, setBody] = useState('');
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+  const listRef = useRef(null);
+
+  async function refresh(scrollToBottom) {
+    try {
+      const msgs = await api.getMessages(username);
+      setMessages(msgs);
+      if (scrollToBottom) {
+        requestAnimationFrame(() => {
+          if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+        });
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    refresh(true);
+    const t = setInterval(() => refresh(false), 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [username]);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!body.trim()) return;
+    setSending(true);
+    setError('');
+    try {
+      await api.sendMessage(username, body.trim());
+      setBody('');
+      await refresh(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="dm-thread-view">
+      <div className="memories-header">
+        <button type="button" className="memories-back" onClick={onBack} aria-label="Back">←</button>
+        <h2>{username}</h2>
+      </div>
+      <div className="dm-message-list" ref={listRef}>
+        {messages === null && <div className="empty-state">Loading…</div>}
+        {messages !== null && messages.length === 0 && <div className="empty-state">Say hi 👋</div>}
+        {messages && messages.map((m) => (
+          <div key={m.id} className={`dm-message ${m.fromMe ? 'mine' : 'theirs'}`}>{m.body}</div>
+        ))}
+      </div>
+      {error && <p className="error">{error}</p>}
+      <form className="dm-compose" onSubmit={submit}>
+        <input type="text" maxLength={1000} placeholder="Message…" value={body} onChange={(e) => setBody(e.target.value)} />
+        <button type="submit" disabled={sending || !body.trim()}>Send</button>
+      </form>
+    </div>
+  );
+}
+
+function PublicProfileView({ username, onBack, onFriendChanged, onOpenMessage }) {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2052,7 +2168,10 @@ function PublicProfileView({ username, onBack, onFriendChanged }) {
                 <button type="button" className="friend-action" disabled={busy} onClick={acceptRequest}>Accept request</button>
               )}
               {profile.friendStatus === 'friends' && (
-                <button type="button" className="friend-action remove" disabled={busy} onClick={removeFriend}>Remove friend</button>
+                <>
+                  <button type="button" className="friend-action" onClick={() => onOpenMessage(username)}>Message</button>
+                  <button type="button" className="friend-action remove" disabled={busy} onClick={removeFriend}>Remove friend</button>
+                </>
               )}
             </div>
           )}
@@ -2062,7 +2181,7 @@ function PublicProfileView({ username, onBack, onFriendChanged }) {
   );
 }
 
-function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpenSettings }) {
+function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpenMessages, onOpenSettings }) {
   const [bio, setBio] = useState('');
 
   useEffect(() => {
@@ -2073,6 +2192,7 @@ function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpe
     <div className="profile-view">
       <div className="profile-view-header">
         <button type="button" className="profile-icon-btn" onClick={onOpenFriends} aria-label="Friends"><IconUserPlus /></button>
+        <button type="button" className="profile-icon-btn" onClick={onOpenMessages} aria-label="Messages"><IconMessage /></button>
         <button type="button" className="profile-icon-btn" onClick={onOpenSettings} aria-label="Settings"><IconSettings /></button>
       </div>
       <div className="profile-view-avatar">
@@ -2424,6 +2544,7 @@ export default function App() {
   const [profileUsername, setProfileUsername] = useState(null);
   const [previousTab, setPreviousTab] = useState('discover');
   const [inviteFrom] = useState(inviteRefFromLocation);
+  const [dmUsername, setDmUsername] = useState(null);
 
   function openComposer() {
     setTab('discover');
@@ -2440,6 +2561,25 @@ export default function App() {
   function closeProfile() {
     setTab(previousTab);
     setProfileUsername(null);
+  }
+
+  function openMessage(username) {
+    // Coming from the conversations list keeps previousTab pointing at the
+    // list (so the thread's back button returns to it); coming from
+    // anywhere else (a friend row, a public profile) skips straight there.
+    if (tab !== 'dm-thread') setPreviousTab(tab);
+    setDmUsername(username);
+    setTab('dm-thread');
+  }
+
+  function closeMessage() {
+    setTab(previousTab);
+    setDmUsername(null);
+  }
+
+  function openMessagesList() {
+    setPreviousTab(tab);
+    setTab('messages');
   }
 
   async function handleLogin(email, password) {
@@ -2834,12 +2974,19 @@ export default function App() {
             avatarUrl={auth.avatarUrl}
             friendCount={progress.friendCount || 0}
             onOpenFriends={() => setTab('friends')}
+            onOpenMessages={openMessagesList}
             onOpenSettings={() => setTab('settings')}
           />
         )}
-        {tab === 'friends' && <FriendsView onBack={() => setTab('profile')} onSearchUsers={handleSearchUsers} onOpenProfile={openProfile} />}
+        {tab === 'friends' && <FriendsView onBack={() => setTab('profile')} onSearchUsers={handleSearchUsers} onOpenProfile={openProfile} onOpenMessage={openMessage} />}
         {tab === 'public-profile' && profileUsername && (
-          <PublicProfileView username={profileUsername} onBack={closeProfile} onFriendChanged={refreshAll} />
+          <PublicProfileView username={profileUsername} onBack={closeProfile} onFriendChanged={refreshAll} onOpenMessage={openMessage} />
+        )}
+        {tab === 'messages' && (
+          <ConversationsListView onBack={() => setTab(previousTab)} onOpenMessage={openMessage} />
+        )}
+        {tab === 'dm-thread' && dmUsername && (
+          <DMThreadView username={dmUsername} onBack={closeMessage} />
         )}
         {tab === 'settings' && (
           <SettingsView

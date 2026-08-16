@@ -1013,6 +1013,82 @@ app.delete('/api/friends/:username', requireAuth, (req, res) => {
   res.json({ status: 'removed' });
 });
 
+// --- Direct messages (1:1, friends-only) ---
+function getConversation(userIdA, userIdB) {
+  const a = Math.min(userIdA, userIdB);
+  const b = Math.max(userIdA, userIdB);
+  return db.prepare('SELECT * FROM conversations WHERE user_a_id = ? AND user_b_id = ?').get(a, b);
+}
+function getOrCreateConversation(userIdA, userIdB) {
+  const a = Math.min(userIdA, userIdB);
+  const b = Math.max(userIdA, userIdB);
+  db.prepare('INSERT OR IGNORE INTO conversations (user_a_id, user_b_id) VALUES (?, ?)').run(a, b);
+  return db.prepare('SELECT * FROM conversations WHERE user_a_id = ? AND user_b_id = ?').get(a, b);
+}
+
+app.get('/api/conversations', requireAuth, (req, res) => {
+  const myId = req.authUser.id;
+  const rows = db.prepare(`
+    SELECT c.id, u.username, u.avatar_url,
+           (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_body,
+           (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_at,
+           (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id AND sender_id != ? AND read_at IS NULL) as unread
+    FROM conversations c
+    JOIN users u ON u.id = (CASE WHEN c.user_a_id = ? THEN c.user_b_id ELSE c.user_a_id END)
+    WHERE c.user_a_id = ? OR c.user_b_id = ?
+  `).all(myId, myId, myId, myId);
+  const conversations = rows
+    .filter((r) => r.last_at) // hide empty conversations (created but nothing sent yet)
+    .map((r) => ({
+      username: r.username,
+      avatarUrl: r.avatar_url || null,
+      lastBody: r.last_body,
+      lastAt: r.last_at,
+      unread: r.unread,
+    }))
+    .sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
+  res.json(conversations);
+});
+
+app.get('/api/conversations/:username/messages', requireAuth, (req, res) => {
+  const other = getUserByUsername(req.params.username);
+  if (!other) return res.status(404).json({ error: 'User not found' });
+  const friendRow = friendRowBetween(req.authUser.id, other.id);
+  if (!friendRow || friendRow.status !== 'accepted') return res.status(403).json({ error: 'You can only message friends' });
+  if (isBlocked(req.authUser.id, other.id)) return res.status(403).json({ error: 'You can\'t message this person' });
+
+  const convo = getConversation(req.authUser.id, other.id);
+  if (!convo) return res.json([]);
+
+  db.prepare(`UPDATE messages SET read_at = datetime('now') WHERE conversation_id = ? AND sender_id != ? AND read_at IS NULL`)
+    .run(convo.id, req.authUser.id);
+
+  const rows = db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 200').all(convo.id);
+  res.json(rows.map((m) => ({
+    id: m.id,
+    body: m.body,
+    fromMe: m.sender_id === req.authUser.id,
+    createdAt: m.created_at,
+  })));
+});
+
+app.post('/api/conversations/:username/messages', requireAuth, requireVerified, (req, res) => {
+  const other = getUserByUsername(req.params.username);
+  if (!other) return res.status(404).json({ error: 'User not found' });
+  if (other.id === req.authUser.id) return res.status(400).json({ error: "You can't message yourself" });
+  const friendRow = friendRowBetween(req.authUser.id, other.id);
+  if (!friendRow || friendRow.status !== 'accepted') return res.status(403).json({ error: 'You can only message friends' });
+  if (isBlocked(req.authUser.id, other.id)) return res.status(403).json({ error: "You can't message this person" });
+
+  const body = ((req.body || {}).body || '').trim().slice(0, 1000);
+  if (!body) return res.status(400).json({ error: 'Message is empty' });
+  if (containsBlockedContent(body)) return res.status(400).json({ error: "That message isn't allowed." });
+
+  const convo = getOrCreateConversation(req.authUser.id, other.id);
+  const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?)').run(convo.id, req.authUser.id, body);
+  res.status(201).json({ id: info.lastInsertRowid, body, fromMe: true, createdAt: new Date().toISOString() });
+});
+
 // --- Groups ---
 app.get('/api/users/:username/groups', (req, res) => {
   const user = getUserByUsername(req.params.username);
