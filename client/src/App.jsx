@@ -1030,7 +1030,7 @@ function CommentsSection({ post, onComment }) {
   );
 }
 
-function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock }) {
+function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onOpenProfile }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapped, setSwapped] = useState(false); // tap-to-swap which shot is on top, purely local to this viewer
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
@@ -1047,9 +1047,17 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
         </div>
         <div className="post-head-text">
           <div className="post-head-line">
-            <strong className={post.isAnonymous ? 'anon-name' : ''}>{posterName}</strong>
+            {post.isAnonymous ? (
+              <strong className="anon-name">{posterName}</strong>
+            ) : (
+              <button type="button" className="post-head-name" onClick={() => onOpenProfile(posterName)}>{posterName}</button>
+            )}
             <span className="post-head-arrow">caught</span>
-            <strong>{post.subjectDisplayName || post.subjectUsername}</strong>
+            {post.subjectDisplayName ? (
+              <strong>{post.subjectDisplayName}</strong>
+            ) : (
+              <button type="button" className="post-head-name" onClick={() => onOpenProfile(post.subjectUsername)}>{post.subjectUsername}</button>
+            )}
           </div>
           <div className="post-head-meta">
             {post.visibility === 'group' ? post.groupName : 'Public'}
@@ -1119,18 +1127,18 @@ function PostCard({ post, currentUsername, onReact, onComment, onSave, onCredit,
   );
 }
 
-function PostList({ posts, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, emptyText }) {
+function PostList({ posts, currentUsername, onReact, onComment, onSave, onCredit, onReport, onBlock, onOpenProfile, emptyText }) {
   if (!posts.length) return <div className="empty-state">{emptyText}</div>;
   return (
     <div className="post-list">
       {posts.map((post) => (
-        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} />
+        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} onOpenProfile={onOpenProfile} />
       ))}
     </div>
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, showComposer, onCloseComposer }) {
+function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onOpenProfile, showComposer, onCloseComposer }) {
   return (
     <div className="feed-view">
       {showComposer && (
@@ -1152,6 +1160,7 @@ function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, o
         onCredit={onCredit}
         onReport={onReport}
         onBlock={onBlock}
+        onOpenProfile={onOpenProfile}
         emptyText="No public posts yet — be the first to catch someone being a beast."
       />
     </div>
@@ -1276,7 +1285,7 @@ function GroupRequestsSection({ groupId, onApprovedOrDeclined }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onRefreshGroup }) {
+function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onOpenProfile, onRefreshGroup }) {
   const [showForm, setShowForm] = useState(false);
   return (
     <div className="group-detail">
@@ -1314,6 +1323,7 @@ function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSub
         onCredit={onCredit}
         onReport={onReport}
         onBlock={onBlock}
+        onOpenProfile={onOpenProfile}
         emptyText="No posts in this group yet."
       />
     </div>
@@ -1497,7 +1507,7 @@ function BadgesView({ badges }) {
   );
 }
 
-function LeaderboardView({ leaderboard, currentUsername }) {
+function LeaderboardView({ leaderboard, currentUsername, onOpenProfile }) {
   return (
     <div className="leaderboard">
       <table>
@@ -1516,12 +1526,12 @@ function LeaderboardView({ leaderboard, currentUsername }) {
             <tr key={row.username} className={row.username.toLowerCase() === currentUsername.toLowerCase() ? 'me' : ''}>
               <td>{i + 1}</td>
               <td>
-                <span className="leaderboard-player">
+                <button type="button" className="leaderboard-player" onClick={() => onOpenProfile(row.username)}>
                   <span className="leaderboard-avatar">
                     {row.avatarUrl ? <img src={row.avatarUrl} alt="" /> : row.username.charAt(0).toUpperCase()}
                   </span>
                   {row.username}
-                </span>
+                </button>
               </td>
               <td>{row.title} <span className="lvl-num">(Lv {row.level})</span></td>
               <td>{row.totalXp}</td>
@@ -1657,7 +1667,7 @@ function DaresSection({ onSearchUsers }) {
   );
 }
 
-function FriendsView({ onBack, onSearchUsers }) {
+function FriendsView({ onBack, onSearchUsers, onOpenProfile }) {
   const [friends, setFriends] = useState(null); // null = still loading
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
   const [suggestions, setSuggestions] = useState([]);
@@ -1738,15 +1748,12 @@ function FriendsView({ onBack, onSearchUsers }) {
             {results.map((name) => {
               const already = friendUsernames.has(name.toLowerCase()) || pendingUsernames.has(name.toLowerCase());
               return (
-                <button
-                  type="button"
-                  key={name}
-                  className="subject-result"
-                  disabled={already}
-                  onClick={() => sendRequest(name)}
-                >
-                  {name} {already ? '✓' : ''}
-                </button>
+                <div key={name} className="friend-row">
+                  <button type="button" className="friend-row-name" onClick={() => onOpenProfile(name)}>{name}</button>
+                  <button type="button" className="friend-action" disabled={already} onClick={() => sendRequest(name)}>
+                    {already ? '✓' : 'Add'}
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -1759,7 +1766,7 @@ function FriendsView({ onBack, onSearchUsers }) {
           <h2>Requests</h2>
           {requests.incoming.map((r) => (
             <div key={r.id} className="friend-row">
-              <span>{r.username}</span>
+              <button type="button" className="friend-row-name" onClick={() => onOpenProfile(r.username)}>{r.username}</button>
               <div className="friend-row-actions">
                 <button className="friend-action" onClick={() => respond(r.id, 'accept')}>Accept</button>
                 <button className="friend-action remove" onClick={() => respond(r.id, 'decline')}>Decline</button>
@@ -1774,7 +1781,7 @@ function FriendsView({ onBack, onSearchUsers }) {
           <h2>Sent</h2>
           {requests.outgoing.map((r) => (
             <div key={r.id} className="friend-row">
-              <span>{r.username} <span className="friend-status">pending</span></span>
+              <button type="button" className="friend-row-name" onClick={() => onOpenProfile(r.username)}>{r.username} <span className="friend-status">pending</span></button>
               <button className="friend-action" onClick={() => cancel(r.id)}>Cancel</button>
             </div>
           ))}
@@ -1786,7 +1793,7 @@ function FriendsView({ onBack, onSearchUsers }) {
           <h2>People you may know</h2>
           {suggestions.map((s) => (
             <div key={s.username} className="friend-row">
-              <span>{s.username} <span className="friend-status">{s.mutualFriends} mutual friend{s.mutualFriends === 1 ? '' : 's'}</span></span>
+              <button type="button" className="friend-row-name" onClick={() => onOpenProfile(s.username)}>{s.username} <span className="friend-status">{s.mutualFriends} mutual friend{s.mutualFriends === 1 ? '' : 's'}</span></button>
               <button className="friend-action" onClick={() => sendRequest(s.username)}>Add</button>
             </div>
           ))}
@@ -1798,7 +1805,7 @@ function FriendsView({ onBack, onSearchUsers }) {
         {friends.length === 0 && <div className="empty-state">No friends yet — search above to add some.</div>}
         {friends.map((f) => (
           <div key={f.username} className="friend-row">
-            <span>{f.username}</span>
+            <button type="button" className="friend-row-name" onClick={() => onOpenProfile(f.username)}>{f.username}</button>
             <button className="friend-action remove" onClick={() => remove(f.username)}>Remove</button>
           </div>
         ))}
@@ -1807,7 +1814,117 @@ function FriendsView({ onBack, onSearchUsers }) {
   );
 }
 
+function PublicProfileView({ username, onBack, onFriendChanged }) {
+  const [profile, setProfile] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try {
+      setProfile(await api.getPublicProfile(username));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    setProfile(null);
+    setError('');
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [username]);
+
+  async function addFriend() {
+    setBusy(true);
+    try {
+      await api.sendFriendRequest(username);
+      await load();
+      onFriendChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptRequest() {
+    setBusy(true);
+    try {
+      await api.respondToFriendRequest(profile.friendRequestId, 'accept');
+      await load();
+      onFriendChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeFriend() {
+    setBusy(true);
+    try {
+      await api.removeFriend(username);
+      await load();
+      onFriendChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="profile-view">
+      <div className="profile-view-header">
+        <button type="button" className="memories-back" onClick={onBack} aria-label="Back">←</button>
+      </div>
+      {error && <p className="error">{error}</p>}
+      {!profile && !error && <div className="empty-state">Loading…</div>}
+      {profile && (
+        <>
+          <div className="profile-view-avatar">
+            {profile.avatarUrl ? <img src={profile.avatarUrl} alt="" /> : <span>{profile.username.charAt(0).toUpperCase()}</span>}
+          </div>
+          <h1 className="profile-view-name">{profile.username}</h1>
+          {profile.bio && <p className="profile-view-bio">{profile.bio}</p>}
+          <p className="profile-view-friends">{profile.friendCount} friend{profile.friendCount === 1 ? '' : 's'}</p>
+
+          <div className="public-profile-stats">
+            <div><strong>{profile.title}</strong><span>Lv {profile.level}</span></div>
+            <div><strong>{profile.totalXp}</strong><span>Beast Points</span></div>
+            <div><strong>{profile.creditedPostCount}</strong><span>Posts</span></div>
+            <div><strong>{profile.badgeCount}</strong><span>Badges</span></div>
+          </div>
+
+          {!profile.isSelf && (
+            <div className="public-profile-actions">
+              {profile.friendStatus === 'none' && (
+                <button type="button" className="friend-action" disabled={busy} onClick={addFriend}>Add friend</button>
+              )}
+              {profile.friendStatus === 'requested' && (
+                <button type="button" className="friend-action" disabled>Requested</button>
+              )}
+              {profile.friendStatus === 'incoming' && (
+                <button type="button" className="friend-action" disabled={busy} onClick={acceptRequest}>Accept request</button>
+              )}
+              {profile.friendStatus === 'friends' && (
+                <button type="button" className="friend-action remove" disabled={busy} onClick={removeFriend}>Remove friend</button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpenSettings }) {
+  const [bio, setBio] = useState('');
+
+  useEffect(() => {
+    api.getMe().then((me) => setBio(me.bio || '')).catch(() => {});
+  }, []);
+
   return (
     <div className="profile-view">
       <div className="profile-view-header">
@@ -1818,6 +1935,7 @@ function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpe
         {avatarUrl ? <img src={avatarUrl} alt="" /> : <span>{displayName.charAt(0).toUpperCase()}</span>}
       </div>
       <h1 className="profile-view-name">{displayName}</h1>
+      {bio && <p className="profile-view-bio">{bio}</p>}
       <p className="profile-view-friends">{friendCount} friend{friendCount === 1 ? '' : 's'}</p>
     </div>
   );
@@ -1826,6 +1944,8 @@ function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpe
 function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
   const [realName, setRealName] = useState('');
   const [savedName, setSavedName] = useState('');
+  const [bio, setBio] = useState('');
+  const [savedBio, setSavedBio] = useState('');
   const [nameStatus, setNameStatus] = useState('');
   const [nameError, setNameError] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -1841,6 +1961,8 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
     api.getMe().then((me) => {
       setRealName(me.realName || '');
       setSavedName(me.realName || '');
+      setBio(me.bio || '');
+      setSavedBio(me.bio || '');
     }).catch(() => {});
   }, []);
 
@@ -1865,8 +1987,9 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
     setNameError('');
     setNameStatus('');
     try {
-      await api.updateProfile(realName.trim());
+      await api.updateProfile(realName.trim(), bio.trim());
       setSavedName(realName.trim());
+      setSavedBio(bio.trim());
       setNameStatus('Saved ✓');
     } catch (err) {
       setNameError(err.message);
@@ -1917,9 +2040,19 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
             onChange={(e) => { setRealName(e.target.value); setNameStatus(''); }}
           />
         </label>
+        <label>
+          <span>Bio <span className="fineprint">(public — shown on your profile)</span></span>
+          <textarea
+            maxLength={160}
+            rows={3}
+            placeholder="Say something about yourself…"
+            value={bio}
+            onChange={(e) => { setBio(e.target.value); setNameStatus(''); }}
+          />
+        </label>
         {nameError && <p className="error">{nameError}</p>}
-        <button type="submit" disabled={!realName.trim() || realName.trim() === savedName}>
-          {nameStatus || 'Save name'}
+        <button type="submit" disabled={!realName.trim() || (realName.trim() === savedName && bio.trim() === savedBio)}>
+          {nameStatus || 'Save profile'}
         </button>
       </form>
 
@@ -2093,11 +2226,24 @@ export default function App() {
   const [tab, setTab] = useState('discover');
   const [showComposer, setShowComposer] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [profileUsername, setProfileUsername] = useState(null);
+  const [previousTab, setPreviousTab] = useState('discover');
 
   function openComposer() {
     setTab('discover');
     setActiveGroupId(null);
     setShowComposer(true);
+  }
+
+  function openProfile(username) {
+    setPreviousTab(tab === 'public-profile' ? previousTab : tab);
+    setProfileUsername(username);
+    setTab('public-profile');
+  }
+
+  function closeProfile() {
+    setTab(previousTab);
+    setProfileUsername(null);
   }
 
   async function handleLogin(email, password) {
@@ -2416,6 +2562,7 @@ export default function App() {
             onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
             onBlock={handleBlockUser}
+            onOpenProfile={openProfile}
             showComposer={showComposer}
             onCloseComposer={() => setShowComposer(false)}
           />
@@ -2446,6 +2593,7 @@ export default function App() {
             onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
             onBlock={handleBlockUser}
+            onOpenProfile={openProfile}
             onRefreshGroup={refreshGroups}
           />
         )}
@@ -2453,7 +2601,7 @@ export default function App() {
           <>
             <XpBar levelInfo={progress.levelInfo} />
             <PeriodTotals periodTotals={progress.periodTotals} />
-            <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} />
+            <LeaderboardView leaderboard={leaderboard} currentUsername={displayName} onOpenProfile={openProfile} />
           </>
         )}
         {tab === 'profile' && (
@@ -2465,7 +2613,10 @@ export default function App() {
             onOpenSettings={() => setTab('settings')}
           />
         )}
-        {tab === 'friends' && <FriendsView onBack={() => setTab('profile')} onSearchUsers={handleSearchUsers} />}
+        {tab === 'friends' && <FriendsView onBack={() => setTab('profile')} onSearchUsers={handleSearchUsers} onOpenProfile={openProfile} />}
+        {tab === 'public-profile' && profileUsername && (
+          <PublicProfileView username={profileUsername} onBack={closeProfile} onFriendChanged={refreshAll} />
+        )}
         {tab === 'settings' && (
           <SettingsView
             streak={progress.streak}

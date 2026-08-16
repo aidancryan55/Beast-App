@@ -555,14 +555,16 @@ app.post('/api/logout', requireAuth, (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   const user = req.authUser;
-  res.json({ username: user.username, realName: user.real_name || '', email: user.email, avatarUrl: user.avatar_url || null });
+  res.json({ username: user.username, realName: user.real_name || '', bio: user.bio || '', email: user.email, avatarUrl: user.avatar_url || null });
 });
 
 app.patch('/api/me/profile', requireAuth, (req, res) => {
-  const realName = ((req.body || {}).realName || '').trim().slice(0, 60);
+  const body = req.body || {};
+  const realName = (body.realName || '').trim().slice(0, 60);
+  const bio = (body.bio || '').trim().slice(0, 160);
   if (!realName) return res.status(400).json({ error: 'Enter your name.' });
-  db.prepare('UPDATE users SET real_name = ? WHERE id = ?').run(realName, req.authUser.id);
-  res.json({ realName });
+  db.prepare('UPDATE users SET real_name = ?, bio = ? WHERE id = ?').run(realName, bio, req.authUser.id);
+  res.json({ realName, bio });
 });
 
 app.post('/api/me/password', requireAuth, async (req, res) => {
@@ -874,6 +876,32 @@ app.get('/api/me/friend-suggestions', requireAuth, (req, res) => {
     results.push({ username: user.username, avatarUrl: user.avatar_url || null, mutualFriends });
   }
   res.json(results);
+});
+
+// Limited public view of someone who isn't (yet) your friend — reachable from
+// search/suggestions/discover. Never exposes private posts/memories, only
+// aggregate stats that are already public via the leaderboard.
+app.get('/api/users/:username/public-profile', requireAuth, (req, res) => {
+  const target = getUserByUsername(req.params.username);
+  if (!target || !target.password_hash) return res.status(404).json({ error: 'User not found' });
+  if (isBlocked(req.authUser.id, target.id)) return res.status(404).json({ error: 'User not found' });
+
+  const stats = computeUserStats(target.id);
+  const friendRow = req.authUser.id === target.id ? null : friendRowBetween(req.authUser.id, target.id);
+  res.json({
+    username: target.username,
+    avatarUrl: target.avatar_url || null,
+    bio: target.bio || '',
+    totalXp: stats.totalXp,
+    level: stats.levelInfo.level,
+    title: stats.levelInfo.title,
+    creditedPostCount: stats.creditedPostCount,
+    badgeCount: stats.badges.length,
+    friendCount: friendCount(target.id),
+    isSelf: req.authUser.id === target.id,
+    friendStatus: !friendRow ? 'none' : (friendRow.status === 'accepted' ? 'friends' : (friendRow.requester_id === req.authUser.id ? 'requested' : 'incoming')),
+    friendRequestId: friendRow && friendRow.status !== 'accepted' ? friendRow.id : null,
+  });
 });
 
 app.get('/api/me/friend-requests', requireAuth, (req, res) => {

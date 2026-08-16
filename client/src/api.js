@@ -46,7 +46,7 @@ export const api = {
   logout: () => req('/logout', { method: 'POST' }),
 
   getMe: () => req('/me'),
-  updateProfile: (realName) => req('/me/profile', { method: 'PATCH', body: JSON.stringify({ realName }) }),
+  updateProfile: (realName, bio) => req('/me/profile', { method: 'PATCH', body: JSON.stringify({ realName, bio }) }),
   changePassword: (currentPassword, newPassword) => req('/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   uploadAvatar: (file) => {
     const form = new FormData();
@@ -102,6 +102,7 @@ export const api = {
   blockUser: (targetUsername) => req('/users/_/block', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
   unblockUser: (targetUsername) => req('/users/_/unblock', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
 
+  getPublicProfile: (username) => req(`/users/${encodeURIComponent(username)}/public-profile`),
   getFriends: () => req('/me/friends'),
   getFriendSuggestions: () => req('/me/friend-suggestions'),
   getFriendRequests: () => req('/me/friend-requests'),

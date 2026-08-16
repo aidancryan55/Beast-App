@@ -12,6 +12,7 @@ db.exec(`
     username TEXT UNIQUE NOT NULL COLLATE NOCASE,
     real_name TEXT,
     avatar_url TEXT,
+    bio TEXT,
     password_hash TEXT,
     email TEXT UNIQUE COLLATE NOCASE,
     email_verified INTEGER NOT NULL DEFAULT 0,
@@ -209,6 +210,9 @@ if (!userCols.includes('real_name')) {
 }
 if (!userCols.includes('avatar_url')) {
   db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
+}
+if (!userCols.includes('bio')) {
+  db.exec('ALTER TABLE users ADD COLUMN bio TEXT');
 }
 if (!userCols.includes('password_hash')) {
   db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
