@@ -1660,14 +1660,20 @@ function DaresSection({ onSearchUsers }) {
 function FriendsView({ onBack, onSearchUsers }) {
   const [friends, setFriends] = useState(null); // null = still loading
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
+  const [suggestions, setSuggestions] = useState([]);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [error, setError] = useState('');
 
   async function refresh() {
-    const [friendList, requestData] = await Promise.all([api.getFriends(), api.getFriendRequests()]);
+    const [friendList, requestData, suggestionList] = await Promise.all([
+      api.getFriends(),
+      api.getFriendRequests(),
+      api.getFriendSuggestions(),
+    ]);
     setFriends(friendList);
     setRequests(requestData);
+    setSuggestions(suggestionList);
   }
 
   useEffect(() => {
@@ -1770,6 +1776,18 @@ function FriendsView({ onBack, onSearchUsers }) {
             <div key={r.id} className="friend-row">
               <span>{r.username} <span className="friend-status">pending</span></span>
               <button className="friend-action" onClick={() => cancel(r.id)}>Cancel</button>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {suggestions.length > 0 && (
+        <section className="friend-section">
+          <h2>People you may know</h2>
+          {suggestions.map((s) => (
+            <div key={s.username} className="friend-row">
+              <span>{s.username} <span className="friend-status">{s.mutualFriends} mutual friend{s.mutualFriends === 1 ? '' : 's'}</span></span>
+              <button className="friend-action" onClick={() => sendRequest(s.username)}>Add</button>
             </div>
           ))}
         </section>

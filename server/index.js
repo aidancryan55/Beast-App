@@ -828,6 +828,12 @@ function friendCount(userId) {
     WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)
   `).get(userId, userId).n;
 }
+function friendIdsOf(userId) {
+  return db.prepare(`
+    SELECT CASE WHEN requester_id = ? THEN addressee_id ELSE requester_id END as friend_id
+    FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)
+  `).all(userId, userId, userId).map((r) => r.friend_id);
+}
 function serializeFriendUser(user) {
   return { username: user.username, avatarUrl: user.avatar_url || null };
 }
@@ -840,6 +846,34 @@ app.get('/api/me/friends', requireAuth, (req, res) => {
     ORDER BY u.username COLLATE NOCASE
   `).all(req.authUser.id, req.authUser.id, req.authUser.id);
   res.json(rows.map(serializeFriendUser));
+});
+
+// "People you may know" — anyone who's a friend of one of your friends but
+// not already your friend (or a pending request either way). Ranked by how
+// many of your friends they have in common, most mutual friends first.
+app.get('/api/me/friend-suggestions', requireAuth, (req, res) => {
+  const myId = req.authUser.id;
+  const myFriendIds = friendIdsOf(myId);
+  const hidden = new Set(getHiddenUserIds(myId));
+
+  const mutualCounts = new Map();
+  for (const friendId of myFriendIds) {
+    for (const fofId of friendIdsOf(friendId)) {
+      if (fofId === myId || hidden.has(fofId)) continue;
+      mutualCounts.set(fofId, (mutualCounts.get(fofId) || 0) + 1);
+    }
+  }
+
+  const ranked = [...mutualCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const results = [];
+  for (const [candidateId, mutualFriends] of ranked) {
+    if (results.length >= 20) break;
+    if (friendRowBetween(myId, candidateId)) continue; // already friends, or a request is pending either way
+    const user = db.prepare('SELECT username, avatar_url FROM users WHERE id = ? AND password_hash IS NOT NULL AND banned = 0').get(candidateId);
+    if (!user) continue;
+    results.push({ username: user.username, avatarUrl: user.avatar_url || null, mutualFriends });
+  }
+  res.json(results);
 });
 
 app.get('/api/me/friend-requests', requireAuth, (req, res) => {

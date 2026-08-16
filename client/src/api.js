@@ -103,6 +103,7 @@ export const api = {
   unblockUser: (targetUsername) => req('/users/_/unblock', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
 
   getFriends: () => req('/me/friends'),
+  getFriendSuggestions: () => req('/me/friend-suggestions'),
   getFriendRequests: () => req('/me/friend-requests'),
   sendFriendRequest: (targetUsername) => req('/friends/request', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
   respondToFriendRequest: (requestId, action) => req(`/friends/requests/${requestId}/respond`, { method: 'POST', body: JSON.stringify({ action }) }),
