@@ -1,6 +1,7 @@
 /* ---------- Layout shells ---------- */
 .login-screen, .loading-screen {
-  min-height: 100vh;
+  height: 100%;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -175,7 +176,8 @@
 
 /* ---------- Onboarding wizard (one question per screen) ---------- */
 .onboard-screen {
-  min-height: 100vh;
+  height: 100%;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 20px 24px calc(28px + env(safe-area-inset-bottom, 0px));
@@ -457,6 +459,10 @@
   backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
   z-index: 20;
+}
+
+body.modal-open .bottom-nav {
+  display: none;
 }
 
 .bottom-nav-btn {

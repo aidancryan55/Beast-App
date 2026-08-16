@@ -5,6 +5,17 @@ import './App.css';
 // Plain line icons (no emoji) for nav chrome — matches the reference app's
 // minimal SF-Symbol-style iconography instead of colorful emoji glyphs.
 const iconProps = { viewBox: '0 0 24 24', width: 20, height: 20, fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
+
+// Hides the fixed bottom nav for as long as a full-screen modal (post
+// composer, create-group form) is open — sidesteps a WKWebView quirk on
+// device where position:fixed elements can render out of z-index order,
+// by making sure there's nothing left for the modal to conflict with.
+function useHideNavWhileOpen(isOpen) {
+  useEffect(() => {
+    if (isOpen) document.body.classList.add('modal-open');
+    return () => document.body.classList.remove('modal-open');
+  }, [isOpen]);
+}
 function IconHome(props) {
   return (
     <svg {...iconProps} {...props}>
@@ -1289,6 +1300,7 @@ function PostList({ posts, currentUsername, onReact, onComment, onSave, onCredit
 }
 
 function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, showComposer, onCloseComposer }) {
+  useHideNavWhileOpen(showComposer);
   return (
     <div className="feed-view">
       {showComposer && (
@@ -1438,6 +1450,7 @@ function GroupRequestsSection({ groupId, onApprovedOrDeclined }) {
 
 function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, onRefreshGroup }) {
   const [showForm, setShowForm] = useState(false);
+  useHideNavWhileOpen(showForm);
   return (
     <div className="group-detail">
       <button className="back-btn" onClick={onBack}>← All groups</button>
@@ -1551,6 +1564,7 @@ function DiscoverGroupRow({ group, onJoin, onCancelRequest }) {
 function GroupsView({ myGroups, discoverGroups, onSearchGroups, onCreateGroup, onJoinGroup, onCancelGroupRequest, onOpenGroup }) {
   const [showCreate, setShowCreate] = useState(false);
   const [query, setQuery] = useState('');
+  useHideNavWhileOpen(showCreate);
 
   return (
     <div className="groups-view">
