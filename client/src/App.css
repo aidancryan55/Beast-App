@@ -308,7 +308,7 @@
 .app {
   max-width: 880px;
   margin: 0 auto;
-  height: 100dvh;
+  height: var(--app-vh, 100dvh);
   padding: 20px 16px 0;
   display: flex;
   flex-direction: column;
@@ -1114,6 +1114,7 @@
   display: flex;
   gap: 10px;
   margin-top: 4px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .credit-modal-actions button {
