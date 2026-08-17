@@ -44,6 +44,10 @@ export const api = {
   signupFinish: (email, password) => req('/signup/finish', { method: 'POST', body: JSON.stringify({ email, password }) }),
   login: (email, password) => req('/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   logout: () => req('/logout', { method: 'POST' }),
+  signInWithApple: (identityToken, realName) =>
+    req('/auth/apple', { method: 'POST', body: JSON.stringify({ identityToken, realName }) }),
+  finishAppleSignup: (pendingToken, username, realName) =>
+    req('/auth/apple/finish', { method: 'POST', body: JSON.stringify({ pendingToken, username, realName }) }),
 
   getMe: () => req('/me'),
   updateProfile: (realName, bio) => req('/me/profile', { method: 'PATCH', body: JSON.stringify({ realName, bio }) }),

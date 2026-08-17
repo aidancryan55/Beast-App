@@ -94,6 +94,19 @@
   border-color: var(--border);
 }
 
+.apple-signin-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #000 !important;
+  color: #fff !important;
+}
+
+.apple-signin-btn:disabled {
+  opacity: 0.6;
+}
+
 .login-card form {
   display: flex;
   flex-direction: column;

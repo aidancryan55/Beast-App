@@ -35,7 +35,23 @@ db.exec(`
     phone_verified INTEGER NOT NULL DEFAULT 0,
     phone_verify_code_hash TEXT,
     phone_verify_expires TEXT,
+    apple_sub TEXT UNIQUE,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- A verified-but-not-yet-usernamed "Sign in with Apple" identity. Created
+  -- when someone authenticates with Apple for the first time and there's no
+  -- existing account to log into or link — the real users row only gets
+  -- created once they pick a username (see /api/auth/apple/finish), same
+  -- shape as the email/password signup wizard's own two-step pattern.
+  CREATE TABLE IF NOT EXISTS pending_apple_signups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    apple_sub TEXT NOT NULL,
+    email TEXT,
+    real_name TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -346,6 +362,10 @@ if (!userCols.includes('phone_verify_expires')) {
 // Safe to run every boot regardless of whether phone_hash already had an
 // inline UNIQUE (fresh DB) or was just ALTER-added above (migrated DB).
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_hash ON users(phone_hash)');
+if (!userCols.includes('apple_sub')) {
+  db.exec('ALTER TABLE users ADD COLUMN apple_sub TEXT');
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_sub ON users(apple_sub)');
 
 // Auto-promote an admin account by email, so there's no manual DB surgery needed.
 if (process.env.ADMIN_EMAIL) {

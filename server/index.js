@@ -6,6 +6,8 @@ const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
+const jwksClient = require('jwks-rsa');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const db = require('./db');
 const { LEVELS } = require('./activities');
@@ -66,6 +68,30 @@ function createSession(userId) {
 function getUserByToken(token) {
   if (!token) return null;
   return db.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(token) || null;
+}
+
+// --- Sign in with Apple ---
+// Apple's public keys rotate; jwks-rsa fetches and caches them by `kid`
+// instead of us pinning a static key. APPLE_BUNDLE_ID must match the app's
+// real bundle ID (the token's `aud` claim) or a forged/other-app token would
+// otherwise verify as valid.
+const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.aidanryan.beastgame';
+const appleJwks = jwksClient({ jwksUri: 'https://appleid.apple.com/auth/keys' });
+function getAppleSigningKey(header, callback) {
+  appleJwks.getSigningKey(header.kid, (err, key) => {
+    if (err) return callback(err);
+    callback(null, key.getPublicKey());
+  });
+}
+function verifyAppleIdentityToken(identityToken) {
+  return new Promise((resolve, reject) => {
+    jwt.verify(
+      identityToken,
+      getAppleSigningKey,
+      { algorithms: ['RS256'], issuer: 'https://appleid.apple.com', audience: APPLE_BUNDLE_ID },
+      (err, decoded) => (err ? reject(err) : resolve(decoded))
+    );
+  });
 }
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || '';
@@ -556,9 +582,84 @@ app.post('/api/logout', requireAuth, (req, res) => {
   res.json({ status: 'logged out' });
 });
 
+// realName is only ever sent on the very first authorization for a given
+// Apple ID — Apple gives the app the user's name exactly once and never
+// again, so the client has to capture and forward it right then.
+app.post('/api/auth/apple', authLimiter, async (req, res) => {
+  const { identityToken, realName } = req.body || {};
+  if (!identityToken) return res.status(400).json({ error: 'Missing Apple identity token' });
+
+  let claims;
+  try {
+    claims = await verifyAppleIdentityToken(identityToken);
+  } catch {
+    return res.status(401).json({ error: 'Could not verify Apple sign-in' });
+  }
+  const appleSub = claims.sub;
+  const email = (claims.email || '').toLowerCase() || null;
+
+  let user = db.prepare('SELECT * FROM users WHERE apple_sub = ?').get(appleSub);
+  if (!user && email) {
+    // A real, finished account (has a password) signing in with Apple for
+    // the first time — link by verified email rather than making a duplicate.
+    const existing = db.prepare('SELECT * FROM users WHERE email = ? AND password_hash IS NOT NULL').get(email);
+    if (existing) {
+      db.prepare('UPDATE users SET apple_sub = ? WHERE id = ?').run(appleSub, existing.id);
+      user = existing;
+    }
+  }
+
+  if (user) {
+    if (user.banned) return res.status(403).json({ error: 'This account has been suspended.', code: 'banned' });
+    const token = createSession(user.id);
+    return res.json({ displayName: user.username, token, isAdmin: !!user.is_admin, avatarUrl: user.avatar_url || null });
+  }
+
+  // Brand new identity — needs a username before an account can exist.
+  // Carrying the verified appleSub forward as an opaque server-issued token
+  // rather than trusting anything the client sends back for it.
+  db.prepare('DELETE FROM pending_apple_signups WHERE apple_sub = ?').run(appleSub); // drop any stale attempt
+  const pendingToken = crypto.randomBytes(24).toString('hex');
+  const expires = new Date(Date.now() + EMAIL_CODE_EXPIRY_MS).toISOString();
+  db.prepare(`
+    INSERT INTO pending_apple_signups (token, apple_sub, email, real_name, expires_at) VALUES (?, ?, ?, ?, ?)
+  `).run(pendingToken, appleSub, email, (realName || '').trim().slice(0, 60) || null, expires);
+  res.json({ needsUsername: true, pendingToken, suggestedRealName: (realName || '').trim().slice(0, 60) || null });
+});
+
+app.post('/api/auth/apple/finish', authLimiter, (req, res) => {
+  const body = req.body || {};
+  const pendingToken = (body.pendingToken || '').trim();
+  const username = (body.username || '').trim();
+  const realName = (body.realName || '').trim().slice(0, 60);
+
+  const pending = db.prepare('SELECT * FROM pending_apple_signups WHERE token = ?').get(pendingToken);
+  if (!pending) return res.status(400).json({ error: 'That sign-in expired — try again.' });
+  if (new Date(pending.expires_at) < new Date()) {
+    db.prepare('DELETE FROM pending_apple_signups WHERE id = ?').run(pending.id);
+    return res.status(400).json({ error: 'That sign-in expired — try again.' });
+  }
+  if (!realName) return res.status(400).json({ error: 'Enter your name.' });
+  if (!username || !DISPLAY_NAME_RE.test(username)) {
+    return res.status(400).json({ error: 'Username must be 1-30 characters (letters, numbers, spaces, . \' -).' });
+  }
+  const existingByUsername = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (existingByUsername) return res.status(409).json({ error: 'That username is taken.' });
+
+  const isAdmin = process.env.ADMIN_EMAIL && pending.email === process.env.ADMIN_EMAIL.toLowerCase() ? 1 : 0;
+  const info = db.prepare(`
+    INSERT INTO users (username, real_name, email, email_verified, apple_sub, is_admin)
+    VALUES (?, ?, ?, 1, ?, ?)
+  `).run(username, realName, pending.email, pending.apple_sub, isAdmin);
+  db.prepare('DELETE FROM pending_apple_signups WHERE id = ?').run(pending.id);
+
+  const token = createSession(info.lastInsertRowid);
+  res.json({ displayName: username, token, isAdmin: !!isAdmin, avatarUrl: null });
+});
+
 app.get('/api/me', requireAuth, (req, res) => {
   const user = req.authUser;
-  res.json({ username: user.username, realName: user.real_name || '', bio: user.bio || '', email: user.email, avatarUrl: user.avatar_url || null });
+  res.json({ username: user.username, realName: user.real_name || '', bio: user.bio || '', email: user.email, avatarUrl: user.avatar_url || null, hasPassword: !!user.password_hash });
 });
 
 app.patch('/api/me/profile', requireAuth, (req, res) => {
@@ -603,8 +704,13 @@ app.post('/api/me/avatar', requireAuth, upload.single('avatar'), async (req, res
 // Apple 5.1.1(v): account creation requires in-app account deletion.
 app.delete('/api/account', requireAuth, async (req, res) => {
   const user = req.authUser;
-  const ok = await verifyPassword((req.body || {}).password || '', user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Wrong password.' });
+  // Apple-only accounts (signed up via Sign in with Apple) have no password
+  // to confirm with — their session token already proves who they are, same
+  // as every other authenticated action they take.
+  if (user.password_hash) {
+    const ok = await verifyPassword((req.body || {}).password || '', user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Wrong password.' });
+  }
 
   // Hand off group ownership first so deleting your account never cascades
   // into destroying a group other people are still in (see note in db.js),
@@ -778,8 +884,9 @@ app.get('/api/me/dares', requireAuth, (req, res) => {
 // --- Leaderboard ---
 app.get('/api/leaderboard', (req, res) => {
   // Exclude signups that were started but never finished (no password set
-  // yet) — they're not real, usable accounts, just claimed usernames.
-  const users = db.prepare('SELECT id, username, avatar_url FROM users WHERE password_hash IS NOT NULL').all();
+  // and no Apple sign-in linked) — they're not real, usable accounts, just
+  // claimed usernames.
+  const users = db.prepare('SELECT id, username, avatar_url FROM users WHERE password_hash IS NOT NULL OR apple_sub IS NOT NULL').all();
   const board = users
     .map((u) => {
       const stats = computeUserStats(u.id);
@@ -805,7 +912,7 @@ app.get('/api/users/:username/search', (req, res) => {
   const q = (req.query.q || '').trim();
   if (q.length < 1) return res.json([]);
   const results = db.prepare(`
-    SELECT username FROM users WHERE username LIKE ? AND id != ? AND password_hash IS NOT NULL LIMIT 10
+    SELECT username FROM users WHERE username LIKE ? AND id != ? AND (password_hash IS NOT NULL OR apple_sub IS NOT NULL) LIMIT 10
   `).all(`%${q}%`, user.id).map((r) => r.username);
   res.json(results);
 });
@@ -920,7 +1027,7 @@ app.get('/api/me/friend-suggestions', requireAuth, (req, res) => {
   for (const [candidateId, mutualFriends] of ranked) {
     if (results.length >= 20) break;
     if (friendRowBetween(myId, candidateId)) continue; // already friends, or a request is pending either way
-    const user = db.prepare('SELECT username, avatar_url FROM users WHERE id = ? AND password_hash IS NOT NULL AND banned = 0').get(candidateId);
+    const user = db.prepare('SELECT username, avatar_url FROM users WHERE id = ? AND (password_hash IS NOT NULL OR apple_sub IS NOT NULL) AND banned = 0').get(candidateId);
     if (!user) continue;
     results.push({ username: user.username, avatarUrl: user.avatar_url || null, mutualFriends });
   }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 import { api } from './api';
 import './App.css';
 
@@ -79,6 +80,14 @@ function IconMessage(props) {
   );
 }
 
+function IconApple(props) {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" {...props}>
+      <path d="M16.365 1.43c0 1.14-.415 2.19-1.15 2.995-.807.86-2.13 1.523-3.24 1.44-.14-1.086.43-2.22 1.11-2.93.79-.84 2.14-1.47 3.28-1.505zM20.66 17.9c-.545 1.23-.81 1.78-1.53 2.86-1.01 1.5-2.44 3.375-4.2 3.39-1.56.015-1.96-1.02-4.08-1.005-2.12.015-2.56 1.02-4.13 1.005-1.76-.015-3.11-1.71-4.12-3.21C-.5 15.9-.9 10.72 1.135 7.985c1.44-1.94 3.71-3.08 5.84-3.08 2.17 0 3.53 1.185 5.33 1.185 1.75 0 2.8-1.185 5.33-1.185 1.9 0 3.9.995 5.33 2.72-4.69 2.57-3.93 9.28-2.31 10.275z" />
+    </svg>
+  );
+}
+
 function IconSettings(props) {
   return (
     <svg {...iconProps} {...props}>
@@ -88,8 +97,8 @@ function IconSettings(props) {
   );
 }
 
-function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerifyCode, onSignupFinish, inviteFrom }) {
-  // 'landing' | 'signup-realname' | 'signup-username' | 'signup-avatar' | 'signup-email' | 'signup-code' | 'signup-password' | 'login'
+function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerifyCode, onSignupFinish, onAppleSignIn, onAppleFinish, inviteFrom }) {
+  // 'landing' | 'signup-realname' | 'signup-username' | 'signup-avatar' | 'signup-email' | 'signup-code' | 'signup-password' | 'login' | 'apple-username'
   const [screen, setScreen] = useState('landing');
   const [realName, setRealName] = useState('');
   const [username, setUsername] = useState('');
@@ -102,7 +111,57 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
   const [errorCode, setErrorCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [applePendingToken, setApplePendingToken] = useState('');
   const avatarInputRef = useRef(null);
+
+  async function handleAppleButtonPress() {
+    setError('');
+    setLoading(true);
+    try {
+      const { response } = await SignInWithApple.authorize({
+        clientId: 'com.aidanryan.beastgame',
+        redirectURI: 'https://beast-app-0y3m.onrender.com',
+        scopes: 'email name',
+        state: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+      });
+      // Apple only ever sends the name on the very first authorization for
+      // this Apple ID — capture it now, it won't come again on a retry/relogin.
+      const appleRealName = [response.givenName, response.familyName].filter(Boolean).join(' ').trim();
+      const result = await onAppleSignIn(response.identityToken, appleRealName);
+      if (result.needsUsername) {
+        setApplePendingToken(result.pendingToken);
+        setRealName(result.suggestedRealName || appleRealName || '');
+        setScreen('apple-username');
+      }
+      // else: onAppleSignIn already logged them in — parent swaps this screen out.
+    } catch (err) {
+      if (err.message !== 'USER_CANCELLED' && err.code !== '1001') {
+        setError(err.message || "Couldn't sign in with Apple.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitAppleUsername(e) {
+    e.preventDefault();
+    if (!username.trim() || !realName.trim()) return;
+    setError('');
+    setLoading(true);
+    try {
+      const { available } = await api.checkUsernameAvailable(username.trim());
+      if (!available) {
+        setError('That username is taken.');
+        return;
+      }
+      await onAppleFinish(applePendingToken, username.trim(), realName.trim());
+      // Success logs you straight in — the parent swaps this screen out.
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function pickAvatarFile(e) {
     const file = e.target.files?.[0];
@@ -245,6 +304,31 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
           {error && <p className="error">{error}</p>}
           <button type="submit" className="onboard-continue" disabled={loading || !username.trim()}>
             {loading ? 'Checking…' : 'Continue'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  if (screen === 'apple-username') {
+    return (
+      <div className="onboard-screen">
+        <button type="button" className="onboard-back" onClick={() => { setError(''); setScreen('landing'); }} aria-label="Back">‹</button>
+        <form className="onboard-body" onSubmit={submitAppleUsername}>
+          <p className="onboard-wordmark">CATCH A BEAST</p>
+          <h1 className="onboard-question">Almost there — pick a username</h1>
+          <input
+            className="onboard-input"
+            autoFocus
+            placeholder="Username"
+            value={username}
+            maxLength={30}
+            onChange={(e) => { setUsername(e.target.value); setError(''); }}
+          />
+          <p className="onboard-hint">Shown publicly on the leaderboard and on posts — you can't change this later, so pick something you'll want to keep.</p>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" className="onboard-continue" disabled={loading || !username.trim() || !realName.trim()}>
+            {loading ? 'Finishing…' : 'Continue'}
           </button>
         </form>
       </div>
@@ -400,7 +484,12 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
         <div className="auth-toggle">
           <button type="button" onClick={() => { setError(''); setScreen('signup-realname'); }}>Create Account</button>
           <button type="button" className="secondary" onClick={() => { setError(''); setScreen('login'); }}>Log In</button>
+          <button type="button" className="apple-signin-btn" onClick={handleAppleButtonPress} disabled={loading}>
+            <IconApple />
+            Sign in with Apple
+          </button>
         </div>
+        {error && <p className="error">{error}</p>}
         <p className="fineprint">Your display name is shown publicly on the leaderboard and on posts anyone can see in Discover — your email stays private and is only used to sign in.</p>
         <p className="fineprint"><a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></p>
       </div>
@@ -2538,6 +2627,11 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
+  const [hasPassword, setHasPassword] = useState(true); // assume true until /me loads, so the field doesn't flash away
+
+  useEffect(() => {
+    api.getMe().then((me) => setHasPassword(me.hasPassword)).catch(() => {});
+  }, []);
   const [deleting, setDeleting] = useState(false);
   const [inviteStatus, setInviteStatus] = useState('');
 
@@ -2657,17 +2751,19 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
           <button type="button" className="friend-action remove" onClick={() => setConfirming(true)}>Delete my account</button>
         ) : (
           <form onSubmit={submitDelete}>
-            <input
-              type="password"
-              placeholder="Confirm your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-            />
+            {hasPassword && (
+              <input
+                type="password"
+                placeholder="Confirm your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoFocus
+              />
+            )}
             {error && <p className="error">{error}</p>}
             <div className="credit-modal-actions">
               <button type="button" className="secondary-btn" onClick={() => setConfirming(false)}>Cancel</button>
-              <button type="submit" disabled={deleting || !password}>{deleting ? 'Deleting…' : 'Permanently delete'}</button>
+              <button type="submit" disabled={deleting || (hasPassword && !password)}>{deleting ? 'Deleting…' : 'Permanently delete'}</button>
             </div>
           </form>
         )}
@@ -2784,6 +2880,32 @@ export default function App() {
     const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin, avatarUrl: result.avatarUrl || null };
     localStorage.setItem('ccq_auth', JSON.stringify(authData));
     setAuth(authData);
+  }
+
+  // Shared by both Apple sign-in paths below: an existing/linked account
+  // logs straight in, and a finished first-time signup gets the exact same treatment.
+  function applyAppleAuthResult(result) {
+    api.setToken(result.token);
+    const authData = { displayName: result.displayName, token: result.token, isAdmin: !!result.isAdmin, avatarUrl: result.avatarUrl || null };
+    localStorage.setItem('ccq_auth', JSON.stringify(authData));
+    setAuth(authData);
+    if (inviteFrom && inviteFrom.toLowerCase() !== result.displayName.toLowerCase()) {
+      api.sendFriendRequest(inviteFrom).catch(() => {});
+    }
+  }
+
+  // Returns the raw result so LoginScreen can branch on needsUsername
+  // without this component needing to know about that intermediate state.
+  async function handleAppleSignIn(identityToken, realName) {
+    const result = await api.signInWithApple(identityToken, realName);
+    if (!result.needsUsername) applyAppleAuthResult(result);
+    return result;
+  }
+
+  async function handleAppleFinish(pendingToken, username, realName) {
+    const result = await api.finishAppleSignup(pendingToken, username, realName);
+    applyAppleAuthResult(result);
+    return result;
   }
 
   async function handleSignupStart(realName, username, email) {
@@ -3078,6 +3200,8 @@ export default function App() {
         onSignupResendCode={handleSignupResendCode}
         onSignupVerifyCode={handleSignupVerifyCode}
         onSignupFinish={handleSignupFinish}
+        onAppleSignIn={handleAppleSignIn}
+        onAppleFinish={handleAppleFinish}
         inviteFrom={inviteFrom}
       />
     );
