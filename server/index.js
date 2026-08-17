@@ -1727,12 +1727,14 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
   }
 
   let groupId = null;
+  let groupName = null;
   if (visibility === 'group') {
     const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(body.groupId);
     if (!group) return fail(404, 'Group not found');
     if (!isGroupMember(group.id, creditedBy.id)) return fail(403, "You're not in that group");
     if (!isGroupMember(group.id, subject.id)) return fail(400, 'That person is not in this group');
     groupId = group.id;
+    groupName = group.name;
   }
 
   // Tag up to MAX_ADDITIONAL_SUBJECTS more real people beyond the primary
@@ -1820,6 +1822,13 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
     const payout = Math.min(dare.wager_points, Math.max(0, creditBudgetFor(dare.target_user_id, dare.issuer_user_id, null)));
     if (payout > 0) {
       writeLedgerEntry(dare.target_user_id, payout, 'dare_wager', info.lastInsertRowid, dare.issuer_user_id);
+    }
+  }
+
+  if (groupId) {
+    for (const memberId of getGroupMemberIds(groupId)) {
+      if (memberId === creditedBy.id) continue;
+      notifyUser(memberId, 'social', { title: `Posted in ${groupName}`, body: `${creditedBy.username} posted a beast` });
     }
   }
 
