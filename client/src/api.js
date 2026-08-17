@@ -51,6 +51,10 @@ export const api = {
 
   getMe: () => req('/me'),
   updateProfile: (realName, bio) => req('/me/profile', { method: 'PATCH', body: JSON.stringify({ realName, bio }) }),
+  updatePrivacy: (isPrivate) => req('/me/privacy', { method: 'PATCH', body: JSON.stringify({ isPrivate }) }),
+  updateNotificationPrefs: (prefs) => req('/me/notification-prefs', { method: 'PATCH', body: JSON.stringify(prefs) }),
+  registerDeviceToken: (token) => req('/me/device-token', { method: 'POST', body: JSON.stringify({ token }) }),
+  unregisterDeviceToken: (token) => req('/me/device-token', { method: 'DELETE', body: JSON.stringify({ token }) }),
   changePassword: (currentPassword, newPassword) => req('/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   uploadAvatar: (file) => {
     const form = new FormData();
@@ -140,4 +144,13 @@ export const api = {
 
   getAdminReports: () => req('/admin/reports'),
   resolveReport: (reportId, action) => req(`/admin/reports/${reportId}/resolve`, { method: 'POST', body: JSON.stringify({ action }) }),
+  getAdminClientErrors: () => req('/admin/client-errors'),
+
+  // Fire-and-forget — a failed error report shouldn't itself throw.
+  reportClientError: (message, stack, url) =>
+    fetch(`${BASE}/client-error`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ message, stack, url }),
+    }).catch(() => {}),
 };

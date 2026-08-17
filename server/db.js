@@ -36,6 +36,21 @@ db.exec(`
     phone_verify_code_hash TEXT,
     phone_verify_expires TEXT,
     apple_sub TEXT UNIQUE,
+    is_private INTEGER NOT NULL DEFAULT 0,
+    push_messages INTEGER NOT NULL DEFAULT 1,
+    push_friend_requests INTEGER NOT NULL DEFAULT 1,
+    push_social INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- One row per installed device that's granted push permission. A token can
+  -- get reassigned to a different account on the same device (sign out, sign
+  -- in as someone else) so it's UNIQUE on its own, not per-user.
+  CREATE TABLE IF NOT EXISTS device_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
+    platform TEXT NOT NULL DEFAULT 'ios',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -241,6 +256,20 @@ db.exec(`
     UNIQUE(post_id, reporter_user_id)
   );
 
+  -- Client-reported crashes/errors, self-hosted instead of a third-party
+  -- crash service (no extra account/billing signup). user_id is nullable
+  -- since a crash can happen before login (e.g. on the login screen itself).
+  CREATE TABLE IF NOT EXISTS client_errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    message TEXT NOT NULL,
+    stack TEXT,
+    url TEXT,
+    user_agent TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_client_errors_created_at ON client_errors(created_at);
+
   CREATE TABLE IF NOT EXISTS blocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     blocker_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -366,6 +395,18 @@ if (!userCols.includes('apple_sub')) {
   db.exec('ALTER TABLE users ADD COLUMN apple_sub TEXT');
 }
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_sub ON users(apple_sub)');
+if (!userCols.includes('is_private')) {
+  db.exec('ALTER TABLE users ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0');
+}
+if (!userCols.includes('push_messages')) {
+  db.exec('ALTER TABLE users ADD COLUMN push_messages INTEGER NOT NULL DEFAULT 1');
+}
+if (!userCols.includes('push_friend_requests')) {
+  db.exec('ALTER TABLE users ADD COLUMN push_friend_requests INTEGER NOT NULL DEFAULT 1');
+}
+if (!userCols.includes('push_social')) {
+  db.exec('ALTER TABLE users ADD COLUMN push_social INTEGER NOT NULL DEFAULT 1');
+}
 
 // Auto-promote an admin account by email, so there's no manual DB surgery needed.
 if (process.env.ADMIN_EMAIL) {

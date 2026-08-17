@@ -501,9 +501,28 @@ body.modal-open .bottom-nav {
 }
 
 .bottom-nav-icon {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.bottom-nav-badge {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--points-accent);
+  color: var(--points-accent-contrast);
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .bottom-nav-label {
@@ -758,6 +777,115 @@ body.modal-open .bottom-nav {
 
 .inline-edit-form button[type='submit'] {
   align-self: flex-start;
+}
+
+.legal-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.privacy-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.privacy-toggle-row + .privacy-toggle-row {
+  margin-top: 16px;
+}
+
+.privacy-toggle-label {
+  font-weight: 600;
+}
+
+.toggle-switch {
+  flex-shrink: 0;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  border: none;
+  background: var(--border);
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.toggle-switch.on {
+  background: var(--accent);
+  justify-content: flex-end;
+}
+
+.toggle-switch:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.toggle-switch-knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.admin-error-row {
+  flex-direction: column;
+  align-items: stretch;
+  cursor: pointer;
+  gap: 4px;
+}
+
+.admin-error-stack {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 8px;
+  margin-top: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.crash-screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 32px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.crash-screen h1 {
+  font-size: 20px;
+}
+
+.crash-screen p {
+  color: var(--text-dim);
+  max-width: 280px;
+}
+
+.crash-screen button {
+  margin-top: 8px;
+}
+
+.private-account-notice {
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: center;
+  max-width: 260px;
+  margin: 8px auto 0;
 }
 
 /* ---------- Row list styles (used by Groups) ---------- */
@@ -2014,6 +2142,7 @@ body.modal-open .bottom-nav {
 }
 
 .profile-icon-btn {
+  position: relative;
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -2023,6 +2152,25 @@ body.modal-open .bottom-nav {
   align-items: center;
   justify-content: center;
   font-size: 18px;
+}
+
+.profile-icon-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--points-accent);
+  color: var(--points-accent-contrast);
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: 2px solid var(--bg);
 }
 
 .profile-view-avatar {

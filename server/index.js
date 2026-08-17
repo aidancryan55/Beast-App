@@ -6,6 +6,7 @@ const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -93,6 +94,88 @@ function verifyAppleIdentityToken(identityToken) {
     );
   });
 }
+// --- Push notifications (APNs) ---
+// Talks to Apple's HTTP/2 push gateway directly with a token-based (.p8)
+// provider JWT, using Node's built-in http2 module and the jsonwebtoken dep
+// already needed for Sign in with Apple above — no extra push-service
+// account/dependency needed. Silently no-ops if the APNS_* env vars aren't
+// set (e.g. local dev), so this never blocks the routes that trigger it.
+const http2 = require('http2');
+const APNS_KEY_ID = process.env.APNS_KEY_ID;
+const APNS_TEAM_ID = process.env.APNS_TEAM_ID;
+const APNS_KEY = process.env.APNS_KEY ? process.env.APNS_KEY.replace(/\\n/g, '\n') : null;
+const APNS_PRODUCTION = process.env.APNS_PRODUCTION === 'true';
+const APNS_HOST = APNS_PRODUCTION ? 'https://api.push.apple.com' : 'https://api.sandbox.push.apple.com';
+const apnsConfigured = !!(APNS_KEY && APNS_KEY_ID && APNS_TEAM_ID);
+if (!apnsConfigured) {
+  console.log('[apns] Not configured (APNS_KEY/APNS_KEY_ID/APNS_TEAM_ID missing) — push notifications disabled.');
+}
+
+// APNs provider tokens are valid up to an hour; reuse one for 50 minutes
+// instead of signing a fresh JWT per push.
+let cachedApnsToken = null;
+let cachedApnsTokenAt = 0;
+function getApnsProviderToken() {
+  const now = Date.now();
+  if (cachedApnsToken && now - cachedApnsTokenAt < 50 * 60 * 1000) return cachedApnsToken;
+  cachedApnsToken = jwt.sign({ iss: APNS_TEAM_ID, iat: Math.floor(now / 1000) }, APNS_KEY, {
+    algorithm: 'ES256',
+    header: { kid: APNS_KEY_ID },
+  });
+  cachedApnsTokenAt = now;
+  return cachedApnsToken;
+}
+
+function sendApnsPush(deviceToken, payload) {
+  return new Promise((resolve) => {
+    const client = http2.connect(APNS_HOST);
+    client.on('error', () => resolve({ ok: false, status: 0 }));
+    const req = client.request({
+      ':method': 'POST',
+      ':path': `/3/device/${deviceToken}`,
+      authorization: `bearer ${getApnsProviderToken()}`,
+      'apns-topic': APPLE_BUNDLE_ID,
+      'apns-push-type': 'alert',
+      'content-type': 'application/json',
+    });
+    let status = 0;
+    let body = '';
+    req.on('response', (headers) => { status = headers[':status']; });
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => { client.close(); resolve({ ok: status === 200, status, body }); });
+    req.on('error', () => { client.close(); resolve({ ok: false, status: 0 }); });
+    req.end(JSON.stringify(payload));
+  });
+}
+
+const PUSH_PREF_COLUMN = { messages: 'push_messages', friendRequests: 'push_friend_requests', social: 'push_social' };
+// Fire-and-forget — never awaited by the route handlers that call this, so a
+// slow or failing push never delays the actual API response.
+// Called fire-and-forget (never awaited) from every route below — must never
+// throw or reject, or a single bad push (malformed key, network hiccup)
+// would surface as an unhandled rejection and crash the whole process.
+async function notifyUser(userId, category, { title, body }) {
+  if (!apnsConfigured) return;
+  try {
+    const prefCol = PUSH_PREF_COLUMN[category];
+    const user = db.prepare(`SELECT ${prefCol} as enabled FROM users WHERE id = ?`).get(userId);
+    if (!user || !user.enabled) return;
+    const tokens = db.prepare('SELECT token FROM device_tokens WHERE user_id = ?').all(userId).map((r) => r.token);
+    for (const token of tokens) {
+      const result = await sendApnsPush(token, { aps: { alert: { title, body }, sound: 'default' } });
+      if (result.status === 410 || result.status === 400) {
+        let reason = null;
+        try { reason = JSON.parse(result.body || '{}').reason; } catch { /* ignore */ }
+        if (result.status === 410 || reason === 'BadDeviceToken' || reason === 'Unregistered') {
+          db.prepare('DELETE FROM device_tokens WHERE token = ?').run(token);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[apns] notifyUser failed:', err.message);
+  }
+}
+
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -443,6 +526,24 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts — try again in a bit.' },
 });
 
+// Keyed by user id, not IP — these all sit behind requireAuth, and IP-based
+// limiting would unfairly lump together everyone on the same campus wifi/NAT
+// (this app's whole audience). Falls back to IP only if somehow unauthenticated.
+function userLimiter({ windowMs, max, message }) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.authUser?.id?.toString() || ipKeyGenerator(req.ip),
+    message: { error: message },
+  });
+}
+const postLimiter = userLimiter({ windowMs: 60 * 60 * 1000, max: 10, message: "You're posting too fast — try again in a bit." });
+const commentLimiter = userLimiter({ windowMs: 60 * 60 * 1000, max: 30, message: "You're commenting too fast — try again in a bit." });
+const reactionLimiter = userLimiter({ windowMs: 60 * 60 * 1000, max: 60, message: "You're reacting too fast — try again in a bit." });
+const friendRequestLimiter = userLimiter({ windowMs: 60 * 60 * 1000, max: 20, message: "You're sending too many friend requests — try again in a bit." });
+
 // Lets the signup wizard flag a taken username right on the username step,
 // instead of the user only finding out after also typing their email (that
 // error used to surface confusingly on the email screen since /signup/start
@@ -659,7 +760,56 @@ app.post('/api/auth/apple/finish', authLimiter, (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   const user = req.authUser;
-  res.json({ username: user.username, realName: user.real_name || '', bio: user.bio || '', email: user.email, avatarUrl: user.avatar_url || null, hasPassword: !!user.password_hash });
+  res.json({
+    username: user.username,
+    realName: user.real_name || '',
+    bio: user.bio || '',
+    email: user.email,
+    avatarUrl: user.avatar_url || null,
+    hasPassword: !!user.password_hash,
+    isPrivate: !!user.is_private,
+    notificationPrefs: {
+      messages: !!user.push_messages,
+      friendRequests: !!user.push_friend_requests,
+      social: !!user.push_social,
+    },
+  });
+});
+
+app.patch('/api/me/privacy', requireAuth, (req, res) => {
+  const isPrivate = !!(req.body || {}).isPrivate;
+  db.prepare('UPDATE users SET is_private = ? WHERE id = ?').run(isPrivate ? 1 : 0, req.authUser.id);
+  res.json({ isPrivate });
+});
+
+app.patch('/api/me/notification-prefs', requireAuth, (req, res) => {
+  const body = req.body || {};
+  const user = req.authUser;
+  const messages = body.messages !== undefined ? !!body.messages : !!user.push_messages;
+  const friendRequests = body.friendRequests !== undefined ? !!body.friendRequests : !!user.push_friend_requests;
+  const social = body.social !== undefined ? !!body.social : !!user.push_social;
+  db.prepare('UPDATE users SET push_messages = ?, push_friend_requests = ?, push_social = ? WHERE id = ?')
+    .run(messages ? 1 : 0, friendRequests ? 1 : 0, social ? 1 : 0, user.id);
+  res.json({ messages, friendRequests, social });
+});
+
+// Registers this device for push notifications. Upserts on the token itself
+// (not per-user) since the same physical device's token can get reassigned
+// to a different account after sign-out/sign-in.
+app.post('/api/me/device-token', requireAuth, (req, res) => {
+  const token = ((req.body || {}).token || '').trim();
+  if (!token) return res.status(400).json({ error: 'token is required' });
+  db.prepare(`
+    INSERT INTO device_tokens (user_id, token) VALUES (?, ?)
+    ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id
+  `).run(req.authUser.id, token);
+  res.status(204).end();
+});
+
+app.delete('/api/me/device-token', requireAuth, (req, res) => {
+  const token = ((req.body || {}).token || '').trim();
+  if (token) db.prepare('DELETE FROM device_tokens WHERE token = ? AND user_id = ?').run(token, req.authUser.id);
+  res.status(204).end();
 });
 
 app.patch('/api/me/profile', requireAuth, (req, res) => {
@@ -857,6 +1007,7 @@ app.post('/api/dares', requireAuth, requireVerified, (req, res) => {
 
   const info = db.prepare('INSERT INTO dares (issuer_user_id, target_user_id, description, wager_points) VALUES (?, ?, ?, ?)')
     .run(req.authUser.id, target.id, description, wager);
+  notifyUser(target.id, 'social', { title: `${req.authUser.username} dared you`, body: description });
   res.status(201).json({ id: info.lastInsertRowid, status: 'pending', wagerPoints: wager });
 });
 
@@ -980,6 +1131,13 @@ function friendRowBetween(userIdA, userIdB) {
     WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)
   `).get(userIdA, userIdB, userIdB, userIdA);
 }
+function getFriendUserIds(userId) {
+  const rows = db.prepare(`
+    SELECT requester_id, addressee_id FROM friendships
+    WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)
+  `).all(userId, userId);
+  return new Set(rows.map((r) => (r.requester_id === userId ? r.addressee_id : r.requester_id)));
+}
 function friendCount(userId) {
   return db.prepare(`
     SELECT COUNT(*) as n FROM friendships
@@ -1039,24 +1197,43 @@ app.get('/api/me/friend-suggestions', requireAuth, (req, res) => {
 // aggregate stats that are already public via the leaderboard.
 app.get('/api/users/:username/public-profile', requireAuth, (req, res) => {
   const target = getUserByUsername(req.params.username);
-  if (!target || !target.password_hash) return res.status(404).json({ error: 'User not found' });
+  if (!target || !(target.password_hash || target.apple_sub)) return res.status(404).json({ error: 'User not found' });
   if (isBlocked(req.authUser.id, target.id)) return res.status(404).json({ error: 'User not found' });
 
+  const isSelf = req.authUser.id === target.id;
+  const friendRow = isSelf ? null : friendRowBetween(req.authUser.id, target.id);
+  const isFriend = !!friendRow && friendRow.status === 'accepted';
+  const friendStatus = !friendRow ? 'none' : (friendRow.status === 'accepted' ? 'friends' : (friendRow.requester_id === req.authUser.id ? 'requested' : 'incoming'));
+  const friendRequestId = friendRow && friendRow.status !== 'accepted' ? friendRow.id : null;
+  const locked = !!target.is_private && !isSelf && !isFriend;
+
+  if (locked) {
+    return res.json({
+      username: target.username,
+      avatarUrl: target.avatar_url || null,
+      bio: '',
+      isPrivate: true,
+      isSelf,
+      friendStatus,
+      friendRequestId,
+    });
+  }
+
   const stats = computeUserStats(target.id);
-  const friendRow = req.authUser.id === target.id ? null : friendRowBetween(req.authUser.id, target.id);
   res.json({
     username: target.username,
     avatarUrl: target.avatar_url || null,
     bio: target.bio || '',
+    isPrivate: !!target.is_private,
     totalXp: stats.totalXp,
     level: stats.levelInfo.level,
     title: stats.levelInfo.title,
     creditedPostCount: stats.creditedPostCount,
     badgeCount: stats.badges.length,
     friendCount: friendCount(target.id),
-    isSelf: req.authUser.id === target.id,
-    friendStatus: !friendRow ? 'none' : (friendRow.status === 'accepted' ? 'friends' : (friendRow.requester_id === req.authUser.id ? 'requested' : 'incoming')),
-    friendRequestId: friendRow && friendRow.status !== 'accepted' ? friendRow.id : null,
+    isSelf,
+    friendStatus,
+    friendRequestId,
   });
 });
 
@@ -1079,7 +1256,7 @@ app.get('/api/me/friend-requests', requireAuth, (req, res) => {
   });
 });
 
-app.post('/api/friends/request', requireAuth, (req, res) => {
+app.post('/api/friends/request', requireAuth, friendRequestLimiter, (req, res) => {
   const target = getUserByUsername((req.body || {}).targetUsername);
   if (!target) return res.status(404).json({ error: 'That user does not exist' });
   if (target.id === req.authUser.id) return res.status(400).json({ error: "You can't friend yourself" });
@@ -1091,10 +1268,12 @@ app.post('/api/friends/request', requireAuth, (req, res) => {
     if (existing.requester_id === req.authUser.id) return res.status(400).json({ error: 'Request already sent' });
     // They already sent one your way — this makes it mutual, so just accept it.
     db.prepare(`UPDATE friendships SET status = 'accepted' WHERE id = ?`).run(existing.id);
+    notifyUser(existing.requester_id, 'friendRequests', { title: 'Friend request accepted', body: `${req.authUser.username} accepted your friend request` });
     return res.json({ status: 'accepted' });
   }
 
   db.prepare(`INSERT INTO friendships (requester_id, addressee_id, status) VALUES (?, ?, 'pending')`).run(req.authUser.id, target.id);
+  notifyUser(target.id, 'friendRequests', { title: 'New friend request', body: `${req.authUser.username} wants to be friends` });
   res.status(201).json({ status: 'requested' });
 });
 
@@ -1106,6 +1285,7 @@ app.post('/api/friends/requests/:id/respond', requireAuth, (req, res) => {
   const action = (req.body || {}).action;
   if (action === 'accept') {
     db.prepare(`UPDATE friendships SET status = 'accepted' WHERE id = ?`).run(request.id);
+    notifyUser(request.requester_id, 'friendRequests', { title: 'Friend request accepted', body: `${req.authUser.username} accepted your friend request` });
     return res.json({ status: 'accepted' });
   }
   if (action === 'decline') {
@@ -1206,6 +1386,7 @@ app.post('/api/conversations/:username/messages', requireAuth, requireVerified, 
 
   const convo = getOrCreateConversation(req.authUser.id, other.id);
   const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?)').run(convo.id, req.authUser.id, body);
+  notifyUser(other.id, 'messages', { title: req.authUser.username, body });
   res.status(201).json({ id: info.lastInsertRowid, body, fromMe: true, createdAt: new Date().toISOString() });
 });
 
@@ -1331,7 +1512,8 @@ app.post('/api/groups/:groupId/leave', requireAuth, (req, res) => {
 
 // --- Posts (photo-credited Beast Points) ---
 const POST_JOIN_SQL = `
-  SELECT p.*, su.username as subject_username, cu.username as credited_by_username,
+  SELECT p.*, su.username as subject_username, su.is_private as subject_is_private,
+         cu.username as credited_by_username,
          cu.avatar_url as credited_by_avatar_url,
          a.key as activity_key, a.name as activity_name, a.icon as activity_icon,
          g.name as group_name
@@ -1465,7 +1647,7 @@ const MAX_EXTRA_PHOTOS = 4;
 // Extra tagged people beyond the primary subject — 4 tagged total including them.
 const MAX_ADDITIONAL_SUBJECTS = 3;
 
-app.post('/api/posts', requireAuth, requireVerified, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'insetPhoto', maxCount: 1 }, { name: 'extraPhotos', maxCount: MAX_EXTRA_PHOTOS }]), async (req, res) => {
+app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'insetPhoto', maxCount: 1 }, { name: 'extraPhotos', maxCount: MAX_EXTRA_PHOTOS }]), async (req, res) => {
   const creditedBy = req.authUser;
   const body = req.body || {};
   const visibility = body.visibility === 'group' ? 'group' : 'public';
@@ -1709,6 +1891,7 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
   `).run(post.id, user.id, subjectUserId, points);
   if (!isStranger) {
     writeLedgerEntry(subjectUserId, points, 'crowd_credit', post.id, user.id);
+    notifyUser(subjectUserId, 'social', { title: 'You got credited', body: `${user.username} gave you ${points} Beast Points` });
   }
 
   res.json(serializePost(getPostRow(post.id), user.id));
@@ -1721,6 +1904,7 @@ app.get('/api/users/:username/discover', (req, res) => {
 
   const hidden = new Set(getHiddenUserIds(user.id));
   const muted = new Set(getMutedUserIds(user.id));
+  const friends = getFriendUserIds(user.id);
   const rows = db.prepare(`
     ${POST_JOIN_SQL}
     WHERE p.visibility = 'public'
@@ -1728,11 +1912,17 @@ app.get('/api/users/:username/discover', (req, res) => {
     LIMIT 100
   `).all();
 
+  // A private account's posts only surface in Discover to the subject
+  // themself or their friends — scoped to the primary subject only, not the
+  // poster or any additional tagged subjects, to keep this simple.
+  const canSeePrivateSubject = (subjectUserId) => subjectUserId === user.id || friends.has(subjectUserId);
+
   // BLF ranks by current point total (highest first), not just recency — the
   // sort is stable, so equal-point posts still fall back to newest-first
   // since that's the order they arrived in from the query above.
   const posts = rows
     .filter((r) => !hidden.has(r.subject_user_id) && !hidden.has(r.credited_by_user_id) && !muted.has(r.credited_by_user_id))
+    .filter((r) => !r.subject_is_private || canSeePrivateSubject(r.subject_user_id))
     .map((r) => serializePost(r, user.id))
     .filter((p) => !p.expired)
     .sort((a, b) => b.points - a.points);
@@ -1761,7 +1951,7 @@ app.get('/api/groups/:groupId/feed', requireAuth, (req, res) => {
   res.json(posts);
 });
 
-app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
+app.post('/api/posts/:postId/react', requireAuth, reactionLimiter, (req, res) => {
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
@@ -1791,7 +1981,7 @@ app.post('/api/posts/:postId/react', requireAuth, (req, res) => {
 // user_reaction_photos) and reused for every future reaction with that
 // category: send a photo the first time (or to update it), and after that
 // just send the emoji — this route looks up your saved photo for it.
-app.post('/api/posts/:postId/react-selfie', requireAuth, requireVerified, upload.single('photo'), async (req, res) => {
+app.post('/api/posts/:postId/react-selfie', requireAuth, requireVerified, reactionLimiter, upload.single('photo'), async (req, res) => {
   const user = req.authUser;
   const file = req.file;
   const fail = (status, error) => {
@@ -1848,7 +2038,7 @@ app.delete('/api/me/reaction-photos/:emoji', requireAuth, (req, res) => {
   res.json({ status: 'removed' });
 });
 
-app.post('/api/posts/:postId/comments', requireAuth, (req, res) => {
+app.post('/api/posts/:postId/comments', requireAuth, commentLimiter, (req, res) => {
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
@@ -1861,6 +2051,9 @@ app.post('/api/posts/:postId/comments', requireAuth, (req, res) => {
   if (containsBlockedContent(body)) return res.status(400).json({ error: "That comment isn't allowed." });
 
   db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?, ?, ?)').run(post.id, user.id, body);
+  if (post.subject_user_id !== user.id) {
+    notifyUser(post.subject_user_id, 'social', { title: `${user.username} commented`, body });
+  }
   res.status(201).json(serializePost(getPostRow(post.id), user.id));
 });
 
@@ -1976,6 +2169,57 @@ app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
   })));
 });
 
+// --- Client crash/error reporting ---
+// Self-hosted instead of a third-party crash service (which would need its
+// own account/billing signup) — just enough visibility to see what's
+// breaking for real users. No auth required since a crash can happen before
+// login (e.g. on the login screen itself); the reporter is attached only if
+// a valid session token is present.
+const clientErrorLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many error reports.' },
+});
+app.post('/api/client-error', clientErrorLimiter, (req, res) => {
+  const body = req.body || {};
+  const message = String(body.message || 'Unknown error').slice(0, 500);
+  const stack = body.stack ? String(body.stack).slice(0, 4000) : null;
+  const url = body.url ? String(body.url).slice(0, 300) : null;
+  const userAgent = (req.headers['user-agent'] || '').slice(0, 300);
+
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const user = getUserByToken(token);
+
+  db.prepare(`
+    INSERT INTO client_errors (user_id, message, stack, url, user_agent) VALUES (?, ?, ?, ?, ?)
+  `).run(user ? user.id : null, message, stack, url, userAgent);
+
+  console.error(`[client-error]${user ? ` @${user.username}` : ''} ${url || ''}: ${message}`);
+  res.status(204).end();
+});
+
+app.get('/api/admin/client-errors', requireAuth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT ce.id, ce.message, ce.stack, ce.url, ce.user_agent, ce.created_at, u.username
+    FROM client_errors ce
+    LEFT JOIN users u ON u.id = ce.user_id
+    ORDER BY ce.created_at DESC
+    LIMIT 100
+  `).all();
+  res.json(rows.map((r) => ({
+    id: r.id,
+    message: r.message,
+    stack: r.stack,
+    url: r.url,
+    userAgent: r.user_agent,
+    createdAt: r.created_at,
+    username: r.username || null,
+  })));
+});
+
 app.post('/api/admin/reports/:reportId/resolve', requireAuth, requireAdmin, (req, res) => {
   const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.reportId);
   if (!report) return res.status(404).json({ error: 'Report not found' });
@@ -2004,6 +2248,18 @@ function cleanupExpiredPosts() {
 }
 cleanupExpiredPosts();
 setInterval(cleanupExpiredPosts, 60 * 60 * 1000);
+
+// Cap client_errors growth — keep only the most recent 500 reports, since
+// this is a debugging aid, not a record that needs to be preserved forever.
+function cleanupOldClientErrors() {
+  db.prepare(`
+    DELETE FROM client_errors WHERE id NOT IN (
+      SELECT id FROM client_errors ORDER BY created_at DESC LIMIT 500
+    )
+  `).run();
+}
+cleanupOldClientErrors();
+setInterval(cleanupOldClientErrors, 60 * 60 * 1000);
 
 const CONTACT_EMAIL = process.env.CONTACT_EMAIL || 'aidancryan55@gmail.com';
 
@@ -2047,6 +2303,101 @@ app.get('/privacy', (req, res) => {
 
 <h2>Contact</h2>
 <p>Questions, concerns, or a report you'd like to escalate directly? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+</body>
+</html>`);
+});
+
+app.get('/community-guidelines', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Guidelines — Catch a Beast</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px 20px 60px; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; margin-top: 2em; }
+  a { color: #6b3fa0; }
+  li { margin-bottom: 0.5em; }
+</style>
+</head>
+<body>
+<h1>Community Guidelines — Catch a Beast</h1>
+<p>Last updated: ${new Date().toISOString().slice(0, 10)}</p>
+
+<p>Catch a Beast is about catching your friends having a good, ridiculous, memorable time — not about embarrassing, hurting, or exposing anyone. These guidelines apply to every post, comment, reaction, caption, and profile on the app.</p>
+
+<h2>Not allowed, ever</h2>
+<ul>
+  <li>Harassment, bullying, threats, or targeted humiliation of any person.</li>
+  <li>Hate speech or content attacking someone based on race, ethnicity, religion, gender, sexual orientation, disability, or any other protected characteristic.</li>
+  <li>Nudity, sexual content, or sexual exploitation of any kind.</li>
+  <li>Illegal activity, or content depicting or encouraging it.</li>
+  <li>Posting someone else's personal information without their consent (doxxing) — home address, phone number, financial info, etc.</li>
+  <li>Impersonating another person or account.</li>
+  <li>Spam, scams, or automated/bot activity.</li>
+</ul>
+
+<h2>Tagging and consent</h2>
+<p>The core of this app is catching a friend on camera and crediting them. That only works if it stays fun for everyone involved: don't tag someone in a way meant to genuinely embarrass, shame, or expose them, and take a post down (or don't post it at all) if the person in it asks you to.</p>
+
+<h2>Alcohol references</h2>
+<p>Nothing on this app should encourage underage or excessive alcohol use. Any references to drinking are only ever intended for users of legal drinking age, framed around the memory of the moment — never as encouragement to drink.</p>
+
+<h2>Reporting and enforcement</h2>
+<p>Any post can be reported directly from its menu. Reports go to a moderation queue and are reviewed within 24 hours; violating content is removed and repeat or severe violations result in account suspension. You can also block any user at any time, which immediately hides their content from you and yours from them, with no notification sent to them.</p>
+
+<h2>Contact</h2>
+<p>Something you're not sure how to report, or want to flag directly? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+</body>
+</html>`);
+});
+
+app.get('/terms', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of Service — Catch a Beast</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px 20px 60px; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; margin-top: 2em; }
+  a { color: #6b3fa0; }
+</style>
+</head>
+<body>
+<h1>Terms of Service — Catch a Beast</h1>
+<p>Last updated: ${new Date().toISOString().slice(0, 10)}</p>
+
+<p>By creating an account, you agree to these terms. If you don't agree, don't use the app.</p>
+
+<h2>Your account</h2>
+<p>You must be at least 13 years old to use Catch a Beast. You're responsible for what happens on your account, including content posted from it. Keep your login credentials to yourself. One account per person — impersonation and fake accounts aren't allowed.</p>
+
+<h2>Your content</h2>
+<p>You own the photos and captions you post. By posting, you grant Catch a Beast a license to store, display, and distribute that content within the app to the audience you chose (public, or the specific group), for as long as the post exists on the app. You're responsible for having the right to post any photo you upload, including having appropriate consent from anyone identifiable in it.</p>
+
+<h2>Acceptable use</h2>
+<p>Follow our <a href="/community-guidelines">Community Guidelines</a> — they're part of these terms. We can remove content, suspend, or terminate any account that violates them, at our discretion, with or without notice.</p>
+
+<h2>Beast Points have no monetary value</h2>
+<p>Points, levels, badges, and leaderboard standing are for fun only. They can't be bought, sold, exchanged for real money or goods, or redeemed for anything outside the app.</p>
+
+<h2>No warranty</h2>
+<p>Catch a Beast is provided "as is," without warranties of any kind. We don't guarantee the app will be uninterrupted, error-free, or available at all times.</p>
+
+<h2>Limitation of liability</h2>
+<p>To the fullest extent permitted by law, Catch a Beast and its creator aren't liable for any indirect, incidental, or consequential damages arising from your use of the app, including content posted by other users.</p>
+
+<h2>Changes</h2>
+<p>We may update these terms as the app changes. Continuing to use the app after an update means you accept the revised terms.</p>
+
+<h2>Account deletion</h2>
+<p>You can delete your account at any time from Settings. See our <a href="/privacy">Privacy Policy</a> for what happens to your data when you do.</p>
+
+<h2>Contact</h2>
+<p>Questions about these terms? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
 </body>
 </html>`);
 });

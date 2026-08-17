@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
+import { Capacitor } from '@capacitor/core';
+import { PushNotifications } from '@capacitor/push-notifications';
 import { api } from './api';
 import './App.css';
 
@@ -491,7 +493,9 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
         </div>
         {error && <p className="error">{error}</p>}
         <p className="fineprint">Your display name is shown publicly on the leaderboard and on posts anyone can see in Discover — your email stays private and is only used to sign in.</p>
-        <p className="fineprint"><a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></p>
+        <p className="fineprint">
+          By continuing you agree to our <a href="/terms" target="_blank" rel="noreferrer">Terms</a> and <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.
+        </p>
       </div>
     </div>
   );
@@ -2431,15 +2435,21 @@ function PublicProfileView({ username, onBack, onFriendChanged, onOpenMessage })
             {profile.avatarUrl ? <img src={profile.avatarUrl} alt="" /> : <span>{profile.username.charAt(0).toUpperCase()}</span>}
           </div>
           <h1 className="profile-view-name">{profile.username}</h1>
-          {profile.bio && <p className="profile-view-bio">{profile.bio}</p>}
-          <p className="profile-view-friends">{profile.friendCount} friend{profile.friendCount === 1 ? '' : 's'}</p>
+          {profile.isPrivate && !profile.isSelf && profile.friendStatus !== 'friends' ? (
+            <p className="private-account-notice">This account is private. Add them as a friend to see their stats and posts.</p>
+          ) : (
+            <>
+              {profile.bio && <p className="profile-view-bio">{profile.bio}</p>}
+              <p className="profile-view-friends">{profile.friendCount} friend{profile.friendCount === 1 ? '' : 's'}</p>
 
-          <div className="public-profile-stats">
-            <div><strong>{profile.title}</strong><span>Lv {profile.level}</span></div>
-            <div><strong>{profile.totalXp}</strong><span>Beast Points</span></div>
-            <div><strong>{profile.creditedPostCount}</strong><span>Posts</span></div>
-            <div><strong>{profile.badgeCount}</strong><span>Badges</span></div>
-          </div>
+              <div className="public-profile-stats">
+                <div><strong>{profile.title}</strong><span>Lv {profile.level}</span></div>
+                <div><strong>{profile.totalXp}</strong><span>Beast Points</span></div>
+                <div><strong>{profile.creditedPostCount}</strong><span>Posts</span></div>
+                <div><strong>{profile.badgeCount}</strong><span>Badges</span></div>
+              </div>
+            </>
+          )}
 
           {!profile.isSelf && (
             <div className="public-profile-actions">
@@ -2466,7 +2476,7 @@ function PublicProfileView({ username, onBack, onFriendChanged, onOpenMessage })
   );
 }
 
-function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpenMessages, onOpenSettings }) {
+function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpenMessages, onOpenSettings, unreadDMCount }) {
   const [bio, setBio] = useState('');
 
   useEffect(() => {
@@ -2477,7 +2487,10 @@ function ProfileView({ displayName, avatarUrl, friendCount, onOpenFriends, onOpe
     <div className="profile-view">
       <div className="profile-view-header">
         <button type="button" className="profile-icon-btn" onClick={onOpenFriends} aria-label="Friends"><IconUserPlus /></button>
-        <button type="button" className="profile-icon-btn" onClick={onOpenMessages} aria-label="Messages"><IconMessage /></button>
+        <button type="button" className="profile-icon-btn" onClick={onOpenMessages} aria-label="Messages">
+          <IconMessage />
+          {unreadDMCount > 0 && <span className="profile-icon-badge">{unreadDMCount > 9 ? '9+' : unreadDMCount}</span>}
+        </button>
         <button type="button" className="profile-icon-btn" onClick={onOpenSettings} aria-label="Settings"><IconSettings /></button>
       </div>
       <div className="profile-view-avatar">
@@ -2628,12 +2641,46 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
   const [hasPassword, setHasPassword] = useState(true); // assume true until /me loads, so the field doesn't flash away
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [notificationPrefs, setNotificationPrefs] = useState({ messages: true, friendRequests: true, social: true });
+  const [notificationBusyKey, setNotificationBusyKey] = useState(null);
 
   useEffect(() => {
-    api.getMe().then((me) => setHasPassword(me.hasPassword)).catch(() => {});
+    api.getMe().then((me) => {
+      setHasPassword(me.hasPassword);
+      setIsPrivate(!!me.isPrivate);
+      if (me.notificationPrefs) setNotificationPrefs(me.notificationPrefs);
+    }).catch(() => {});
   }, []);
   const [deleting, setDeleting] = useState(false);
   const [inviteStatus, setInviteStatus] = useState('');
+
+  async function togglePrivate() {
+    const next = !isPrivate;
+    setPrivacyBusy(true);
+    setIsPrivate(next); // optimistic
+    try {
+      await api.updatePrivacy(next);
+    } catch {
+      setIsPrivate(!next); // revert on failure
+    } finally {
+      setPrivacyBusy(false);
+    }
+  }
+
+  async function toggleNotificationPref(key) {
+    const next = { ...notificationPrefs, [key]: !notificationPrefs[key] };
+    setNotificationBusyKey(key);
+    setNotificationPrefs(next); // optimistic
+    try {
+      await api.updateNotificationPrefs({ [key]: next[key] });
+    } catch {
+      setNotificationPrefs(notificationPrefs); // revert on failure
+    } finally {
+      setNotificationBusyKey(null);
+    }
+  }
 
   const inviteLink = `${window.location.origin}/invite/${encodeURIComponent(displayName)}`;
 
@@ -2683,6 +2730,52 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
           <input type="text" readOnly value={inviteLink} onFocus={(e) => e.target.select()} />
           <button type="button" className="friend-action" onClick={shareInvite}>{inviteStatus || (navigator.share ? 'Share' : 'Copy')}</button>
         </div>
+      </section>
+
+      <section className="friend-section">
+        <h2>Privacy</h2>
+        <div className="privacy-toggle-row">
+          <div>
+            <span className="privacy-toggle-label">Private account</span>
+            <p className="fineprint">Only friends can see your stats and posts on Discover. People can still find your profile and send you a friend request.</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isPrivate}
+            className={`toggle-switch ${isPrivate ? 'on' : ''}`}
+            disabled={privacyBusy}
+            onClick={togglePrivate}
+          >
+            <span className="toggle-switch-knob" />
+          </button>
+        </div>
+      </section>
+
+      <section className="friend-section">
+        <h2>Notifications</h2>
+        {[
+          { key: 'messages', label: 'Messages', description: 'New direct messages from friends.' },
+          { key: 'friendRequests', label: 'Friend requests', description: 'New requests, and when someone accepts yours.' },
+          { key: 'social', label: 'Activity on your posts', description: 'Comments, Beast Points, and dares.' },
+        ].map(({ key, label, description }) => (
+          <div className="privacy-toggle-row" key={key}>
+            <div>
+              <span className="privacy-toggle-label">{label}</span>
+              <p className="fineprint">{description}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={notificationPrefs[key]}
+              className={`toggle-switch ${notificationPrefs[key] ? 'on' : ''}`}
+              disabled={notificationBusyKey === key}
+              onClick={() => toggleNotificationPref(key)}
+            >
+              <span className="toggle-switch-knob" />
+            </button>
+          </div>
+        ))}
       </section>
 
       <section className="friend-section">
@@ -2739,9 +2832,11 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
         ))}
       </section>
 
-      <section className="friend-section">
+      <section className="friend-section legal-links">
         <h2>Legal</h2>
         <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>
+        <a href="/community-guidelines" target="_blank" rel="noreferrer">Community Guidelines</a>
+        <a href="/terms" target="_blank" rel="noreferrer">Terms of Service</a>
       </section>
 
       <section className="friend-section danger-zone">
@@ -2773,9 +2868,17 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
 }
 
 function AdminView({ reports, onResolve }) {
-  if (!reports.length) return <div className="empty-state">No pending reports.</div>;
+  const [clientErrors, setClientErrors] = useState([]);
+  const [showErrors, setShowErrors] = useState(false);
+  const [expandedErrorId, setExpandedErrorId] = useState(null);
+
+  useEffect(() => {
+    api.getAdminClientErrors().then(setClientErrors).catch(() => {});
+  }, []);
+
   return (
     <div className="admin-view">
+      {reports.length === 0 && <div className="empty-state">No pending reports.</div>}
       {reports.map((r) => (
         <div key={r.id} className="admin-report-card">
           <img className="post-photo" src={r.photoUrl} alt="" />
@@ -2789,6 +2892,26 @@ function AdminView({ reports, onResolve }) {
           </div>
         </div>
       ))}
+
+      <section className="friend-section">
+        <h2>Client errors {clientErrors.length ? `(${clientErrors.length})` : ''}</h2>
+        <button type="button" className="friend-action" onClick={() => setShowErrors((v) => !v)}>
+          {showErrors ? 'Hide' : 'Show'}
+        </button>
+        {showErrors && (
+          clientErrors.length === 0
+            ? <div className="empty-state">No errors reported recently.</div>
+            : clientErrors.map((e) => (
+              <div key={e.id} className="friend-row admin-error-row" onClick={() => setExpandedErrorId(expandedErrorId === e.id ? null : e.id)}>
+                <div>
+                  <div>{e.message}</div>
+                  <p className="fineprint">{e.createdAt} · {e.username || 'anonymous'} · {e.url}</p>
+                  {expandedErrorId === e.id && e.stack && <pre className="admin-error-stack">{e.stack}</pre>}
+                </div>
+              </div>
+            ))
+        )}
+      </section>
     </div>
   );
 }
@@ -2837,6 +2960,17 @@ export default function App() {
   const [previousTab, setPreviousTab] = useState('discover');
   const [inviteFrom] = useState(inviteRefFromLocation);
   const [dmUsername, setDmUsername] = useState(null);
+  const [unreadDMCount, setUnreadDMCount] = useState(0);
+  const deviceTokenRef = useRef(null);
+
+  async function refreshUnreadDMCount() {
+    try {
+      const conversations = await api.getConversations();
+      setUnreadDMCount(conversations.reduce((sum, c) => sum + c.unread, 0));
+    } catch {
+      // not logged in yet, or a transient error — leave the count as-is
+    }
+  }
 
   function openComposer() {
     setTab('discover');
@@ -2867,6 +3001,7 @@ export default function App() {
   function closeMessage() {
     setTab(previousTab);
     setDmUsername(null);
+    refreshUnreadDMCount(); // reading the thread just marked its messages read server-side
   }
 
   function openMessagesList() {
@@ -2955,6 +3090,12 @@ export default function App() {
   }
 
   async function logout() {
+    if (deviceTokenRef.current) {
+      // Best-effort — without this, this device would keep getting pushes
+      // meant for whoever signs in here next.
+      api.unregisterDeviceToken(deviceTokenRef.current).catch(() => {});
+      deviceTokenRef.current = null;
+    }
     try {
       await api.logout();
     } catch {
@@ -3014,6 +3155,43 @@ export default function App() {
     if (displayName) refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayName]);
+
+  useEffect(() => {
+    if (!displayName) return;
+    refreshUnreadDMCount();
+    const t = setInterval(refreshUnreadDMCount, 20000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayName]);
+
+  // Push notifications only exist in the native shell — the web build has no
+  // web-push/VAPID setup, and calling register() there would just error.
+  useEffect(() => {
+    if (!displayName || !Capacitor.isNativePlatform()) return;
+    let regListener;
+    let errListener;
+    (async () => {
+      regListener = await PushNotifications.addListener('registration', (token) => {
+        deviceTokenRef.current = token.value;
+        api.registerDeviceToken(token.value).catch(() => {});
+      });
+      errListener = await PushNotifications.addListener('registrationError', () => {});
+      try {
+        let permStatus = await PushNotifications.checkPermissions();
+        if (permStatus.receive === 'prompt') {
+          permStatus = await PushNotifications.requestPermissions();
+        }
+        if (permStatus.receive === 'granted') await PushNotifications.register();
+      } catch {
+        // push is a nice-to-have — never block the app on it
+      }
+    })();
+    return () => {
+      regListener?.remove();
+      errListener?.remove();
+    };
+  }, [displayName]);
+
 
   async function refreshVisibleFeeds() {
     const jobs = [refreshDiscover()];
@@ -3305,6 +3483,7 @@ export default function App() {
             onOpenFriends={() => setTab('friends')}
             onOpenMessages={openMessagesList}
             onOpenSettings={() => setTab('settings')}
+            unreadDMCount={unreadDMCount}
           />
         )}
         {tab === 'friends' && <FriendsView onBack={() => setTab('profile')} onSearchUsers={handleSearchUsers} onOpenProfile={openProfile} onOpenMessage={openMessage} />}
@@ -3363,7 +3542,10 @@ export default function App() {
           <span className="bottom-nav-label">Ranks</span>
         </button>
         <button className={`bottom-nav-btn ${['profile', 'friends', 'settings'].includes(tab) ? 'active' : ''}`} onClick={() => setTab('profile')}>
-          <span className="bottom-nav-icon"><IconUser /></span>
+          <span className="bottom-nav-icon">
+            <IconUser />
+            {unreadDMCount > 0 && <span className="bottom-nav-badge">{unreadDMCount > 9 ? '9+' : unreadDMCount}</span>}
+          </span>
           <span className="bottom-nav-label">Profile</span>
         </button>
       </nav>
