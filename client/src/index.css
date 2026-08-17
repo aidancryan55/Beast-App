@@ -67,6 +67,15 @@ body {
   margin: 0;
   background: var(--bg);
   overscroll-behavior-y: none;
+  /* Old-but-reliable trick for native WebView rubber-band: overflow:hidden
+     alone doesn't stop Capacitor's outer scrollView from bouncing on iOS —
+     taking body out of normal flow entirely does. The real fix for that
+     bounce is native (contentInset, see capacitor.config.json) and needs a
+     fresh Xcode build; this is the strongest purely-CSS backstop available
+     without one. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
 }
 
 #root {
