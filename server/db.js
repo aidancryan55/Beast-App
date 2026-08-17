@@ -1,8 +1,16 @@
 const path = require('path');
+const fs = require('fs');
 const Database = require('better-sqlite3');
 const { ACTIVITIES } = require('./activities');
 
-const db = new Database(path.join(__dirname, 'data.sqlite'));
+// Render's web services have an ephemeral filesystem — anything written to
+// disk (like this database) is wiped on every new deploy unless it lives on
+// a persistent Disk. DATA_DIR should point at that Disk's mount path in
+// production (see render.yaml / the Render dashboard); it falls back to this
+// directory for local dev, where a throwaway db is fine.
+const dataDir = process.env.DATA_DIR || __dirname;
+fs.mkdirSync(dataDir, { recursive: true });
+const db = new Database(path.join(dataDir, 'data.sqlite'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
