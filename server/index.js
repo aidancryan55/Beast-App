@@ -2411,6 +2411,35 @@ app.get('/terms', (req, res) => {
 </html>`);
 });
 
+// Apple requires a working Support URL in App Store Connect — this is that page.
+app.get('/support', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Catch a Beast</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 24px 20px 60px; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; margin-top: 2em; }
+  a { color: #6b3fa0; }
+</style>
+</head>
+<body>
+<h1>Support — Catch a Beast</h1>
+<p>Need help, found a bug, or want to report a problem with the app? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> and we'll get back to you as soon as we can.</p>
+
+<h2>Common questions</h2>
+<p><strong>How do I delete my account?</strong><br>Open the app, go to Profile → Settings, and scroll to "Delete account."</p>
+<p><strong>How do I report a post or another user?</strong><br>Tap the "···" menu on any post to report it, or visit a profile and use the report/block option there.</p>
+<p><strong>How do I stop notifications?</strong><br>Go to Profile → Settings → Notifications to turn off specific types, or disable them entirely for the app in your device's iOS Settings.</p>
+
+<h2>Legal</h2>
+<p><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a> · <a href="/community-guidelines">Community Guidelines</a></p>
+</body>
+</html>`);
+});
+
 // In production, serve the built React app from this same process/port
 // so there's a single service to deploy instead of two.
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
