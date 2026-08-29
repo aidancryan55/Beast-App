@@ -66,8 +66,6 @@ export const api = {
   getProgress: (displayName) => req(`/users/${encodeURIComponent(displayName)}/progress`),
   getStreak: () => req('/me/streak'),
   getMemories: () => req('/me/memories'),
-  getDares: () => req('/me/dares'),
-  issueDare: (targetUsername, description, wager) => req('/dares', { method: 'POST', body: JSON.stringify({ targetUsername, description, wager }) }),
   getLeaderboard: () => req('/leaderboard'),
 
   searchUsers: (displayName, q) => req(`/users/${encodeURIComponent(displayName)}/search?q=${encodeURIComponent(q)}`),

@@ -2447,22 +2447,6 @@ body.modal-open .bottom-nav {
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
 }
 
-/* ---------- Dares (basic mechanic) ---------- */
-.dares-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.dares-sublabel {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: var(--text-dim);
-  margin-bottom: 2px;
-}
-
 .dare-form {
   display: flex;
   flex-direction: column;

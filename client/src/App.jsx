@@ -1981,125 +1981,6 @@ function LeaderboardView({ leaderboard, currentUsername, onOpenProfile }) {
   );
 }
 
-function DaresSection({ onSearchUsers }) {
-  const [dares, setDares] = useState(null); // null = still loading
-  const [targetQuery, setTargetQuery] = useState('');
-  const [targetUsername, setTargetUsername] = useState('');
-  const [targetResults, setTargetResults] = useState([]);
-  const [description, setDescription] = useState('');
-  const [wager, setWager] = useState(10);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-
-  async function refresh() {
-    setDares(await api.getDares());
-  }
-
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function runTargetSearch(q) {
-    setTargetQuery(q);
-    setTargetUsername('');
-    if (q.trim().length < 1) return setTargetResults([]);
-    setTargetResults(await onSearchUsers(q.trim()));
-  }
-
-  async function submit(e) {
-    e.preventDefault();
-    if (!targetUsername) return setError('Search for who to dare');
-    const wagerNum = Number(wager);
-    if (!Number.isInteger(wagerNum) || wagerNum < 1 || wagerNum > 100) {
-      return setError('Wager must be between 1 and 100');
-    }
-    setError('');
-    setSubmitting(true);
-    try {
-      await api.issueDare(targetUsername, description.trim(), wagerNum);
-      setTargetUsername('');
-      setTargetQuery('');
-      setDescription('');
-      await refresh();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (dares === null) return null;
-  const pendingForMe = dares.filter((d) => !d.isIssuedByMe && d.status === 'pending');
-  const issuedByMe = dares.filter((d) => d.isIssuedByMe);
-
-  return (
-    <section className="friend-section">
-      <h2>Dares</h2>
-      <p className="fineprint">Dare someone to do something and stake a wager — whoever posts a photo fulfilling it wins your wagered points.</p>
-
-      {pendingForMe.length > 0 && (
-        <div className="dares-list">
-          <h3 className="dares-sublabel">Dares waiting on you</h3>
-          {pendingForMe.map((d) => (
-            <div key={d.id} className="friend-row">
-              <span>{d.issuerUsername} dared you: "{d.description}" — {d.wagerPoints} BP if you do it</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {issuedByMe.length > 0 && (
-        <div className="dares-list">
-          <h3 className="dares-sublabel">Dares you've issued</h3>
-          {issuedByMe.map((d) => (
-            <div key={d.id} className="friend-row">
-              <span>{d.targetUsername}: "{d.description}" — {d.wagerPoints} BP <span className="friend-status">{d.status}</span></span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <form onSubmit={submit} className="dare-form">
-        <input
-          type="text"
-          placeholder="Search who to dare"
-          value={targetUsername || targetQuery}
-          onChange={(e) => runTargetSearch(e.target.value)}
-        />
-        {targetResults.length > 0 && !targetUsername && (
-          <div className="subject-results">
-            {targetResults.map((name) => (
-              <button type="button" key={name} className="subject-result" onClick={() => { setTargetUsername(name); setTargetResults([]); }}>
-                {name}
-              </button>
-            ))}
-          </div>
-        )}
-        <input
-          type="text"
-          maxLength={200}
-          placeholder="What's the dare?"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-        <input
-          type="number"
-          min="1"
-          max="100"
-          placeholder="Wager (1-100 BP)"
-          value={wager}
-          onChange={(e) => setWager(e.target.value)}
-        />
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={submitting || !targetUsername || !description.trim()}>
-          {submitting ? 'Sending…' : 'Issue dare'}
-        </button>
-      </form>
-    </section>
-  );
-}
-
 function FriendsView({ onBack, onSearchUsers, onOpenProfile, onOpenMessage }) {
   const [friends, setFriends] = useState(null); // null = still loading
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
@@ -2628,7 +2509,7 @@ function EditProfileSection({ avatarUrl, onAvatarUpdated }) {
   );
 }
 
-function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, onSearchUsers, blockedUsers, onUnblock, mutedUsers, onUnmute, onDeleteAccount, avatarUrl, onAvatarUpdated, onBack, displayName }) {
+function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, onOpenMemories, blockedUsers, onUnblock, mutedUsers, onUnmute, onDeleteAccount, avatarUrl, onAvatarUpdated, onBack, displayName }) {
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
@@ -2749,7 +2630,7 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
         {[
           { key: 'messages', label: 'Messages', description: 'New direct messages from friends.' },
           { key: 'friendRequests', label: 'Friend requests', description: 'New requests, and when someone accepts yours.' },
-          { key: 'social', label: 'Activity on your posts', description: 'Comments, Beast Points, and dares.' },
+          { key: 'social', label: 'Activity on your posts', description: 'Comments and Beast Points.' },
         ].map(({ key, label, description }) => (
           <div className="privacy-toggle-row" key={key}>
             <div>
@@ -2784,8 +2665,6 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
         <p className="fineprint">A private history of every beast you've photographed, past the normal 24h.</p>
         <button type="button" className="friend-action" onClick={onOpenMemories}>Open Memories</button>
       </section>
-
-      <DaresSection onSearchUsers={onSearchUsers} />
 
       <section className="friend-section">
         <h2>Badges {badges.length ? `(${badges.length})` : ''}</h2>
@@ -3496,7 +3375,6 @@ export default function App() {
             adminReportCount={adminReports.length}
             onOpenAdmin={() => setTab('admin')}
             onOpenMemories={() => setTab('memories')}
-            onSearchUsers={handleSearchUsers}
             blockedUsers={blockedUsers}
             onUnblock={handleUnblockUser}
             mutedUsers={mutedUsers}
