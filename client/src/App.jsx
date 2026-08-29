@@ -82,14 +82,6 @@ function IconMessage(props) {
   );
 }
 
-function IconApple(props) {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" {...props}>
-      <path d="M16.365 1.43c0 1.14-.415 2.19-1.15 2.995-.807.86-2.13 1.523-3.24 1.44-.14-1.086.43-2.22 1.11-2.93.79-.84 2.14-1.47 3.28-1.505zM20.66 17.9c-.545 1.23-.81 1.78-1.53 2.86-1.01 1.5-2.44 3.375-4.2 3.39-1.56.015-1.96-1.02-4.08-1.005-2.12.015-2.56 1.02-4.13 1.005-1.76-.015-3.11-1.71-4.12-3.21C-.5 15.9-.9 10.72 1.135 7.985c1.44-1.94 3.71-3.08 5.84-3.08 2.17 0 3.53 1.185 5.33 1.185 1.75 0 2.8-1.185 5.33-1.185 1.9 0 3.9.995 5.33 2.72-4.69 2.57-3.93 9.28-2.31 10.275z" />
-    </svg>
-  );
-}
-
 function IconSettings(props) {
   return (
     <svg {...iconProps} {...props}>
@@ -487,7 +479,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
           <button type="button" onClick={() => { setError(''); setScreen('signup-realname'); }}>Create Account</button>
           <button type="button" className="secondary" onClick={() => { setError(''); setScreen('login'); }}>Log In</button>
           <button type="button" className="apple-signin-btn" onClick={handleAppleButtonPress} disabled={loading}>
-            <IconApple />
+            <span className="apple-glyph" aria-hidden="true"></span>
             Sign in with Apple
           </button>
         </div>

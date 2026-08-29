@@ -107,6 +107,18 @@
   opacity: 0.6;
 }
 
+/* Apple's Sign in with Apple guidelines require the official Apple mark, not
+   custom artwork — this renders the real glyph baked into San Francisco
+   (iOS's system font) instead of an approximated SVG, so it's always
+   pixel-identical to Apple's own logo. Scoped to -apple-system/system-ui
+   since the private-use codepoint only resolves in SF, not the app's
+   default Miranda Sans. */
+.apple-glyph {
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1;
+}
+
 .login-card form {
   display: flex;
   flex-direction: column;
