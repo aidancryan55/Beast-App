@@ -479,7 +479,7 @@ function LoginScreen({ onLogin, onSignupStart, onSignupResendCode, onSignupVerif
           <button type="button" onClick={() => { setError(''); setScreen('signup-realname'); }}>Create Account</button>
           <button type="button" className="secondary" onClick={() => { setError(''); setScreen('login'); }}>Log In</button>
           <button type="button" className="apple-signin-btn" onClick={handleAppleButtonPress} disabled={loading}>
-            <span className="apple-glyph" aria-hidden="true"></span>
+            <span className="apple-glyph" aria-hidden="true">{''}</span>
             Sign in with Apple
           </button>
         </div>
