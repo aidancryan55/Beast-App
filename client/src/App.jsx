@@ -2708,6 +2708,7 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
         <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>
         <a href="/community-guidelines" target="_blank" rel="noreferrer">Community Guidelines</a>
         <a href="/terms" target="_blank" rel="noreferrer">Terms of Service</a>
+        <a href="/support" target="_blank" rel="noreferrer">Help &amp; Support</a>
       </section>
 
       <section className="friend-section danger-zone">
