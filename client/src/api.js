@@ -83,7 +83,7 @@ export const api = {
   leaveGroup: (groupId) => req(`/groups/${groupId}/leave`, { method: 'POST' }),
   getGroupFeed: (groupId) => req(`/groups/${groupId}/feed`),
 
-  createPost: ({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, visibility, groupId, isAnonymous, dareId, points }) => {
+  createPost: ({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, visibility, groupId, isAnonymous, points }) => {
     const form = new FormData();
     form.append('subjectUsername', subjectUsername || '');
     if (subjectDisplayName) form.append('subjectDisplayName', subjectDisplayName);
@@ -97,7 +97,6 @@ export const api = {
     form.append('visibility', visibility || 'public');
     if (groupId) form.append('groupId', groupId);
     if (isAnonymous) form.append('isAnonymous', 'true');
-    if (dareId) form.append('dareId', dareId);
     return reqForm('/posts', form);
   },
   reactToPost: (postId, emoji) => req(`/posts/${postId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }),

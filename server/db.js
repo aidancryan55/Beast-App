@@ -310,26 +310,9 @@ db.exec(`
     UNIQUE(source_post_id, source_type, contributor_user_id)
   );
   CREATE INDEX IF NOT EXISTS idx_points_ledger_earned_at ON points_ledger(earned_at, user_id);
-
-  -- Beast Dares — one user issues a dare to another, staking wager_points of
-  -- their own as the prize; the target fulfills it by attaching the dare
-  -- when posting, which pays the wager from issuer to target (see
-  -- 'dare_wager' in the points ledger). completed_post_id cascades to
-  -- NULL (not deleted) so the dare's own record survives if the post itself
-  -- later expires/gets removed.
-  CREATE TABLE IF NOT EXISTS dares (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    issuer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    target_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    description TEXT NOT NULL,
-    wager_points INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'pending',
-    completed_post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT
-  );
-  CREATE INDEX IF NOT EXISTS idx_dares_target ON dares(target_user_id, status);
 `);
+
+db.exec('DROP TABLE IF EXISTS dares;');
 
 // --- Migrations for databases created before `password_hash` / email auth existed ---
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
@@ -503,11 +486,6 @@ if (postCreditCols.length && !postCreditCols.includes('subject_user_id')) {
       SELECT subject_user_id FROM posts WHERE posts.id = post_credits.post_id
     ) WHERE subject_user_id IS NULL
   `);
-}
-
-const dareCols = db.prepare('PRAGMA table_info(dares)').all().map((c) => c.name);
-if (dareCols.length && !dareCols.includes('wager_points')) {
-  db.exec('ALTER TABLE dares ADD COLUMN wager_points INTEGER NOT NULL DEFAULT 0');
 }
 
 const completionCols = db.prepare('PRAGMA table_info(completions)').all().map((c) => c.name);

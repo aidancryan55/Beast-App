@@ -419,8 +419,7 @@ function computeUserStats(userId) {
   // ledger is the durable source (see its comment in db.js) and is the only
   // one of the two that survives a post's 24h expiry cascade-delete. Using
   // post_credits here was a bug: it meant totalXp/leaderboard silently
-  // dropped as old posts got cleaned up, and dare_wager payouts (ledger-only,
-  // no post_credits row) never counted toward a user's total at all.
+  // dropped as old posts got cleaned up.
   const ledgerEntries = db.prepare(`SELECT points, earned_at FROM points_ledger WHERE user_id = ?`).all(userId);
   const totalXp = ledgerEntries.reduce((sum, e) => sum + e.points, 0);
   const levelInfo = levelForXp(totalXp);
@@ -976,60 +975,6 @@ app.get('/api/me/memories', requireAuth, (req, res) => {
     activityIcon: r.activity_icon || null,
   }));
   res.json(memories);
-});
-
-// --- Beast Dares ---
-// Issue → fulfill via a post → the wager the issuer staked pays out to the
-// target. No premade dare content/templates, no notifications yet.
-app.post('/api/dares', requireAuth, requireVerified, (req, res) => {
-  const body = req.body || {};
-  const target = getUserByUsername(body.targetUsername);
-  if (!target) return res.status(404).json({ error: 'That person does not exist' });
-  if (target.id === req.authUser.id) return res.status(400).json({ error: "You can't dare yourself" });
-  if (isBlocked(req.authUser.id, target.id)) return res.status(403).json({ error: "You can't dare this person" });
-
-  const description = ((body.description || '').trim()).slice(0, 200);
-  if (!description) return res.status(400).json({ error: 'Say what the dare is.' });
-  if (containsBlockedContent(description)) return res.status(400).json({ error: "That dare isn't allowed." });
-
-  // The wager comes out of the same lifetime budget as crowd credit and the
-  // starter award — otherwise dares would be a backdoor around
-  // MAX_CREDIT_PER_CONTRIBUTOR for two people trading points back and forth.
-  const wager = parseInt(body.wager, 10);
-  const budget = creditBudgetFor(target.id, req.authUser.id, null);
-  if (budget <= 0) {
-    return res.status(400).json({ error: `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points` });
-  }
-  const maxWager = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
-  if (!Number.isInteger(wager) || wager < 1 || wager > maxWager) {
-    return res.status(400).json({ error: `Wager must be between 1 and ${maxWager}` });
-  }
-
-  const info = db.prepare('INSERT INTO dares (issuer_user_id, target_user_id, description, wager_points) VALUES (?, ?, ?, ?)')
-    .run(req.authUser.id, target.id, description, wager);
-  notifyUser(target.id, 'social', { title: `${req.authUser.username} dared you`, body: description });
-  res.status(201).json({ id: info.lastInsertRowid, status: 'pending', wagerPoints: wager });
-});
-
-app.get('/api/me/dares', requireAuth, (req, res) => {
-  const rows = db.prepare(`
-    SELECT d.*, iss.username as issuer_username, tgt.username as target_username
-    FROM dares d
-    JOIN users iss ON iss.id = d.issuer_user_id
-    JOIN users tgt ON tgt.id = d.target_user_id
-    WHERE d.issuer_user_id = ? OR d.target_user_id = ?
-    ORDER BY d.created_at DESC
-  `).all(req.authUser.id, req.authUser.id);
-  res.json(rows.map((r) => ({
-    id: r.id,
-    description: r.description,
-    wagerPoints: r.wager_points,
-    status: r.status,
-    issuerUsername: r.issuer_username,
-    targetUsername: r.target_username,
-    isIssuedByMe: r.issuer_user_id === req.authUser.id,
-    createdAt: r.created_at,
-  })));
 });
 
 // --- Leaderboard ---
@@ -1715,17 +1660,6 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
     }
   }
 
-  // Optional: this post fulfills a pending dare. The subject of the post
-  // (who's actually in the photo) must be who the dare targeted — not
-  // possible for a stranger post since there's no real target to match.
-  let dare = null;
-  if (body.dareId && !isStranger) {
-    dare = db.prepare('SELECT * FROM dares WHERE id = ?').get(body.dareId);
-    if (!dare) return fail(404, 'Dare not found');
-    if (dare.status !== 'pending') return fail(400, 'That dare was already completed');
-    if (dare.target_user_id !== subject.id) return fail(400, 'This dare is for someone else');
-  }
-
   let groupId = null;
   let groupName = null;
   if (visibility === 'group') {
@@ -1811,19 +1745,6 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
   }
 
   updateStreakOnPost(creditedBy.id);
-
-  if (dare) {
-    db.prepare(`UPDATE dares SET status = 'completed', completed_post_id = ?, completed_at = datetime('now') WHERE id = ?`)
-      .run(info.lastInsertRowid, dare.id);
-    // Pay the wager the issuer staked when they proposed the dare. Re-clamped
-    // against the issuer's current lifetime budget toward the target (rather
-    // than trusting the amount validated at issue time), in case other
-    // point-giving between them since then already ate into that budget.
-    const payout = Math.min(dare.wager_points, Math.max(0, creditBudgetFor(dare.target_user_id, dare.issuer_user_id, null)));
-    if (payout > 0) {
-      writeLedgerEntry(dare.target_user_id, payout, 'dare_wager', info.lastInsertRowid, dare.issuer_user_id);
-    }
-  }
 
   if (groupId) {
     for (const memberId of getGroupMemberIds(groupId)) {
