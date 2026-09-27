@@ -1607,56 +1607,36 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
     return res.status(status).json({ error });
   };
 
-  // "Random stranger" mode: no real account behind the subject, just a
-  // free-text name/description — for catching someone who may not even
-  // have the app. Only makes sense on the public feed; group posts need a
-  // real member since the group itself is a list of real accounts.
-  const strangerName = ((body.subjectDisplayName || '').trim()).slice(0, 60);
-  const isStranger = !!strangerName;
-  if (isStranger && visibility === 'group') return fail(400, 'Group posts need a real member tagged, not a stranger');
-  if (isStranger && containsBlockedContent(strangerName)) return fail(400, "That name isn't allowed.");
-
-  let subject;
-  if (isStranger) {
-    subject = creditedBy; // placeholder to satisfy subject_user_id NOT NULL — never a real recipient, see subject_display_name
-  } else {
-    subject = getUserByUsername(body.subjectUsername);
-    if (!subject) return fail(404, 'That person does not exist');
-    // Self-tagging is only allowed inside groups — a small trusted circle,
-    // and the starter points below are display-only there (never written to
-    // the ledger) specifically so this can't be used to farm real points.
-    if (subject.id === creditedBy.id && visibility !== 'group') return fail(400, "You can't credit yourself");
-  }
-  const isSelfPost = !isStranger && subject.id === creditedBy.id;
+  const subject = getUserByUsername(body.subjectUsername);
+  if (!subject) return fail(404, 'That person does not exist');
+  // Self-tagging is only allowed inside groups — a small trusted circle,
+  // and the starter points below are display-only there (never written to
+  // the ledger) specifically so this can't be used to farm real points.
+  if (subject.id === creditedBy.id && visibility !== 'group') return fail(400, "You can't credit yourself");
+  const isSelfPost = subject.id === creditedBy.id;
   if (!mainFile) return fail(400, 'A photo is required');
   if (containsBlockedContent(body.caption)) return fail(400, 'That caption isn\'t allowed.');
-  if (!isStranger && !isSelfPost && isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
+  if (!isSelfPost && isBlocked(creditedBy.id, subject.id)) return fail(403, "You can't post about this person");
 
   // Poster-chosen starter award (1-100), gated by the same lifetime
   // MAX_CREDIT_PER_CONTRIBUTOR cap as crowd credit — that cap is what keeps
   // this from being a farming hole now that it's no longer a fixed amount.
-  // Stranger posts skip this entirely: there's no real account to award
-  // points to, and letting the poster claim them instead would reopen the
-  // exact self-farming hole this whole design exists to close. Self-posts
-  // (group-only) DO get a poster-chosen starter number — it shows on the
-  // card — but it's never written to the ledger (see below), so it can't
-  // inflate the poster's real total; only other members' crowd credit does.
-  let points = 0;
-  if (!isStranger) {
-    points = parseInt(body.points, 10);
-    if (isSelfPost) {
-      if (!Number.isInteger(points) || points < 1 || points > MAX_CREDIT_PER_CONTRIBUTOR) {
-        return fail(400, `Points must be between 1 and ${MAX_CREDIT_PER_CONTRIBUTOR}`);
-      }
-    } else {
-      const budget = creditBudgetFor(subject.id, creditedBy.id, null);
-      if (budget <= 0) {
-        return fail(400, `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points`);
-      }
-      const maxPoints = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
-      if (!Number.isInteger(points) || points < 1 || points > maxPoints) {
-        return fail(400, `Points must be between 1 and ${maxPoints}`);
-      }
+  // Self-posts (group-only) DO get a poster-chosen starter number — it shows
+  // on the card — but it's never written to the ledger (see below), so it
+  // can't inflate the poster's real total; only other members' crowd credit does.
+  let points = parseInt(body.points, 10);
+  if (isSelfPost) {
+    if (!Number.isInteger(points) || points < 1 || points > MAX_CREDIT_PER_CONTRIBUTOR) {
+      return fail(400, `Points must be between 1 and ${MAX_CREDIT_PER_CONTRIBUTOR}`);
+    }
+  } else {
+    const budget = creditBudgetFor(subject.id, creditedBy.id, null);
+    if (budget <= 0) {
+      return fail(400, `You've already given this person the max ${MAX_CREDIT_PER_CONTRIBUTOR} points`);
+    }
+    const maxPoints = Math.min(MAX_CREDIT_PER_CONTRIBUTOR, budget);
+    if (!Number.isInteger(points) || points < 1 || points > maxPoints) {
+      return fail(400, `Points must be between 1 and ${maxPoints}`);
     }
   }
 
@@ -1672,12 +1652,12 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
   }
 
   // Tag up to MAX_ADDITIONAL_SUBJECTS more real people beyond the primary
-  // subject — never on stranger or self posts (see isSelfPost/isStranger
-  // above). Invalid entries (duplicate, blocked, not a real account, not in
-  // the group) are silently dropped rather than failing the whole post —
-  // this is a nice-to-have add-on, not something worth blocking a post over.
+  // subject — never on self posts (see isSelfPost above). Invalid entries
+  // (duplicate, blocked, not a real account, not in the group) are silently
+  // dropped rather than failing the whole post — this is a nice-to-have
+  // add-on, not something worth blocking a post over.
   const additionalSubjects = [];
-  if (!isStranger && !isSelfPost) {
+  if (!isSelfPost) {
     const rawAdditional = Array.isArray(body.additionalSubjects)
       ? body.additionalSubjects
       : (body.additionalSubjects ? [body.additionalSubjects] : []);
@@ -1701,9 +1681,9 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
   const isAnonymous = visibility === 'public' && body.isAnonymous === 'true';
 
   const info = db.prepare(`
-    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, inset_photo_filename, subject_display_name, caption, is_anonymous)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, mainFile.filename, insetFile ? insetFile.filename : null, isStranger ? strangerName : null, body.caption || null, isAnonymous ? 1 : 0);
+    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, inset_photo_filename, caption, is_anonymous)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, mainFile.filename, insetFile ? insetFile.filename : null, body.caption || null, isAnonymous ? 1 : 0);
 
   // Mirror the photo(s) into durable storage so they can survive the 24h
   // expiry cleanup for Memories — see uploadPhotoToR2's dev-fallback comment.
@@ -1730,18 +1710,15 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
 
   // Stored as a post_credits row (awarder = poster) so existing per-post
   // display logic (creditorCount, card totals) needs no rework, and
-  // mirrored into the durable ledger so it survives expiry. Skipped
-  // entirely for stranger posts — no real recipient, see the isStranger
-  // check above. For self-posts the post_credits row still lands (so the
-  // card shows the starter number), but the ledger write is skipped — the
-  // whole point of self-posts being display-only for the poster's own
-  // starter amount; only other members' later crowd credit is real.
-  if (!isStranger) {
-    db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, subject_user_id, points) VALUES (?, ?, ?, ?)')
-      .run(info.lastInsertRowid, creditedBy.id, subject.id, points);
-    if (!isSelfPost) {
-      writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
-    }
+  // mirrored into the durable ledger so it survives expiry. For self-posts
+  // the post_credits row still lands (so the card shows the starter number),
+  // but the ledger write is skipped — the whole point of self-posts being
+  // display-only for the poster's own starter amount; only other members'
+  // later crowd credit is real.
+  db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, subject_user_id, points) VALUES (?, ?, ?, ?)')
+    .run(info.lastInsertRowid, creditedBy.id, subject.id, points);
+  if (!isSelfPost) {
+    writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
   }
 
   updateStreakOnPost(creditedBy.id);

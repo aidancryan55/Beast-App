@@ -691,10 +691,8 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   const [subjectUsername, setSubjectUsername] = useState('');
   const [subjectQuery, setSubjectQuery] = useState('');
   const [subjectResults, setSubjectResults] = useState([]);
-  const [subjectMode, setSubjectMode] = useState('friends'); // 'friends' | 'search' | 'stranger'
+  const [subjectMode, setSubjectMode] = useState('friends'); // 'friends' | 'search'
   const [friends, setFriends] = useState(null); // null = still loading
-  const isStranger = subjectMode === 'stranger';
-  const [strangerName, setStrangerName] = useState('');
   const [customActivity, setCustomActivity] = useState('');
   const [points, setPoints] = useState(10);
   const [caption, setCaption] = useState('');
@@ -778,18 +776,11 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
   async function submit(e) {
     e.preventDefault();
     if (!photo) return setError('Add a photo first');
-    if (isStranger) {
-      if (!strangerName.trim()) return setError('Give them a name or description');
-    } else {
-      if (!subjectUsername) return setError(destination === 'group' ? 'Pick who to credit' : 'Search for who to credit');
-    }
+    if (!subjectUsername) return setError(destination === 'group' ? 'Pick who to credit' : 'Search for who to credit');
     if (destination === 'group' && !groupId) return setError('Pick a group');
-    let pointsNum = 0;
-    if (!isStranger) {
-      pointsNum = Number(points);
-      if (!Number.isInteger(pointsNum) || pointsNum < 1 || pointsNum > 100) {
-        return setError('Beast Points must be between 1 and 100');
-      }
+    const pointsNum = Number(points);
+    if (!Number.isInteger(pointsNum) || pointsNum < 1 || pointsNum > 100) {
+      return setError('Beast Points must be between 1 and 100');
     }
     setError('');
     setSubmitting(true);
@@ -800,14 +791,13 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
         finalActivityKey = created.key;
       }
       await onSubmit({
-        subjectUsername: isStranger ? '' : subjectUsername,
-        subjectDisplayName: isStranger ? strangerName.trim() : '',
+        subjectUsername,
         activityKey: finalActivityKey,
         caption,
         photo,
         insetPhoto,
         extraPhotos,
-        additionalSubjects: isStranger || isSelfPost ? [] : additionalSubjects,
+        additionalSubjects: isSelfPost ? [] : additionalSubjects,
         points: pointsNum,
         visibility: destination,
         groupId: destination === 'group' ? groupId : null,
@@ -906,7 +896,6 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
             <div className="destination-toggle subject-mode-toggle">
               <button type="button" className={subjectMode === 'friends' ? 'active' : ''} onClick={() => { setSubjectMode('friends'); setSubjectUsername(''); }}>Friends</button>
               <button type="button" className={subjectMode === 'search' ? 'active' : ''} onClick={() => { setSubjectMode('search'); setSubjectUsername(''); }}>Search</button>
-              <button type="button" className={subjectMode === 'stranger' ? 'active' : ''} onClick={() => { setSubjectMode('stranger'); setSubjectUsername(''); }}>Random</button>
             </div>
 
             {subjectMode === 'friends' && (
@@ -951,21 +940,10 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
                 )}
               </>
             )}
-
-            {subjectMode === 'stranger' && (
-              <input
-                type="text"
-                maxLength={60}
-                placeholder="e.g. guy in the red hat"
-                value={strangerName}
-                onChange={(e) => setStrangerName(e.target.value)}
-                autoFocus
-              />
-            )}
           </label>
         )}
 
-        {!isStranger && !isSelfPost && subjectUsername && (
+        {!isSelfPost && subjectUsername && (
           (() => {
             const pool = (destination === 'group' ? groupMembers : (friends || []).map((f) => f.username))
               .filter((m) => m !== subjectUsername);
@@ -1002,24 +980,17 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
           />
         </label>
 
-        {!isStranger && (
-          <>
-            <label>
-              Beast Points to give (1-100)
-              <input
-                type="number"
-                min="1"
-                max="100"
-                value={points}
-                onChange={(e) => setPoints(e.target.value)}
-              />
-            </label>
-            <p className="fineprint">Everyone else who sees the post can chip in more on top of this.</p>
-          </>
-        )}
-        {isStranger && (
-          <p className="fineprint">No account, no points — this is just for the feed. Others can still throw points at the post for fun, but they won't count toward anyone's real score.</p>
-        )}
+        <label>
+          Beast Points to give (1-100)
+          <input
+            type="number"
+            min="1"
+            max="100"
+            value={points}
+            onChange={(e) => setPoints(e.target.value)}
+          />
+        </label>
+        <p className="fineprint">Everyone else who sees the post can chip in more on top of this.</p>
 
         <label>
           Caption (optional)
@@ -3071,9 +3042,9 @@ export default function App() {
     await Promise.all(jobs);
   }
 
-  async function handleSubmitPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, points, visibility, groupId, isAnonymous }) {
+  async function handleSubmitPost({ subjectUsername, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, points, visibility, groupId, isAnonymous }) {
     await withAuthGuard(async () => {
-      await api.createPost({ subjectUsername, subjectDisplayName, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, points, visibility, groupId, isAnonymous });
+      await api.createPost({ subjectUsername, activityKey, caption, photo, insetPhoto, extraPhotos, additionalSubjects, points, visibility, groupId, isAnonymous });
       await refreshVisibleFeeds();
       const [prog, board] = await Promise.all([api.getProgress(displayName), api.getLeaderboard()]);
       setProgress(prog);
