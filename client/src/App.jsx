@@ -2657,7 +2657,7 @@ function SettingsView({ streak, badges, isAdmin, adminReportCount, onOpenAdmin, 
           <span className="streak-summary-current">{streak.current} day{streak.current === 1 ? '' : 's'}</span>
           <span className="fineprint">Longest: {streak.longest} day{streak.longest === 1 ? '' : 's'}</span>
         </div>
-        {streak.atRisk && <p className="fineprint">Your bender ends tonight if you don't post today.</p>}
+        {streak.atRisk && <p className="fineprint">Your streak ends tonight if you don't post today.</p>}
       </section>
 
       <section className="friend-section">
@@ -3281,7 +3281,7 @@ export default function App() {
 
       {progress.streak.atRisk && (
         <div className="streak-risk-banner">
-          Your bender ends tonight — post to keep it alive
+          Your streak ends tonight — post to keep it alive
         </div>
       )}
 
@@ -3392,7 +3392,7 @@ export default function App() {
         </div>
 
         <footer className="app-footer">
-          Everything here is for laughs. Nothing in this app encourages alcohol use — party-related activities are about the memory, not the drink, and any references are intended for those of legal drinking age only.
+          Everything here is for laughs. Only catch people who are into it, and never anything dangerous, humiliating, or unsafe.
         </footer>
       </main>
 

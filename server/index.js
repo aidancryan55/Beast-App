@@ -353,7 +353,7 @@ function computePeriodTotals(events) {
   return totals;
 }
 
-// --- Beast Streak ("Beast Bender" internally) ---
+// --- Beast Streak ---
 // v1 keep-alive condition is "user POSTS a beast that calendar day" — this may
 // later change to "gets credited" instead of "posts", but that's not
 // implemented yet; don't assume credit-based keep-alive elsewhere in the code.
@@ -2342,6 +2342,7 @@ app.get('/community-guidelines', (req, res) => {
   <li>Hate speech or content attacking someone based on race, ethnicity, religion, gender, sexual orientation, disability, or any other protected characteristic.</li>
   <li>Nudity, sexual content, or sexual exploitation of any kind.</li>
   <li>Illegal activity, or content depicting or encouraging it.</li>
+  <li>Dangerous stunts, dares, or anything that risks physical harm to the person in the photo or anyone else.</li>
   <li>Posting someone else's personal information without their consent (doxxing) — home address, phone number, financial info, etc.</li>
   <li>Impersonating another person or account.</li>
   <li>Spam, scams, or automated/bot activity.</li>
@@ -2349,9 +2350,6 @@ app.get('/community-guidelines', (req, res) => {
 
 <h2>Tagging and consent</h2>
 <p>The core of this app is catching a friend on camera and crediting them. That only works if it stays fun for everyone involved: don't tag someone in a way meant to genuinely embarrass, shame, or expose them, and take a post down (or don't post it at all) if the person in it asks you to.</p>
-
-<h2>Alcohol references</h2>
-<p>Nothing on this app should encourage underage or excessive alcohol use. Any references to drinking are only ever intended for users of legal drinking age, framed around the memory of the moment — never as encouragement to drink.</p>
 
 <h2>Reporting and enforcement</h2>
 <p>Any post can be reported directly from its menu. Reports go to a moderation queue and are reviewed within 24 hours; violating content is removed and repeat or severe violations result in account suspension. You can also block any user at any time, which immediately hides their content from you and yours from them, with no notification sent to them.</p>
