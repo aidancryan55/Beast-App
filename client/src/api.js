@@ -142,9 +142,6 @@ export const api = {
   getAdminReports: () => req('/admin/reports'),
   resolveReport: (reportId, action) => req(`/admin/reports/${reportId}/resolve`, { method: 'POST', body: JSON.stringify({ action }) }),
   getAdminClientErrors: () => req('/admin/client-errors'),
-  getAdminPendingPosts: () => req('/admin/posts/pending'),
-  approvePendingPost: (postId) => req(`/admin/posts/${postId}/approve`, { method: 'POST' }),
-  rejectPendingPost: (postId) => req(`/admin/posts/${postId}/reject`, { method: 'POST' }),
 
   // Fire-and-forget — a failed error report shouldn't itself throw.
   reportClientError: (message, stack, url) =>

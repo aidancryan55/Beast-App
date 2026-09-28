@@ -1499,7 +1499,7 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
             ))}
           </div>
         )}
-        <div className="post-points-badge">{post.pointsApproved ? `+${post.points} BP` : 'Pending approval'}</div>
+        <div className="post-points-badge">+{post.points} BP</div>
         <div className="post-photo-actions">
           {[...REACTION_EMOJIS, ...post.reactions.map((r) => r.emoji).filter((e) => !REACTION_EMOJIS.includes(e))].map((emoji) => {
             const count = post.reactions.find((r) => r.emoji === emoji)?.count || 0;
@@ -1543,9 +1543,7 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
 
       <div className="post-card-footer">
         {post.creditorCount > 1 && <span className="post-creditors">{post.creditorCount} chipped in</span>}
-        {!isSubject && (post.pointsApproved
-          ? <GiveCredit post={post} onCredit={onCredit} />
-          : <span className="fineprint">Awaiting moderator approval before points can be given</span>)}
+        {!isSubject && <GiveCredit post={post} onCredit={onCredit} />}
         {isSubject && (
           <button className="save-btn" onClick={() => onSave(post.id)}>
             {post.saved ? 'Unsave' : 'Keep forever'}
@@ -2750,46 +2748,13 @@ function AdminView({ reports, onResolve }) {
   const [clientErrors, setClientErrors] = useState([]);
   const [showErrors, setShowErrors] = useState(false);
   const [expandedErrorId, setExpandedErrorId] = useState(null);
-  const [pendingPosts, setPendingPosts] = useState([]);
-
-  function refreshPendingPosts() {
-    api.getAdminPendingPosts().then(setPendingPosts).catch(() => {});
-  }
 
   useEffect(() => {
     api.getAdminClientErrors().then(setClientErrors).catch(() => {});
-    refreshPendingPosts();
   }, []);
-
-  async function handleApprovePost(postId) {
-    await api.approvePendingPost(postId);
-    refreshPendingPosts();
-  }
-
-  async function handleRejectPost(postId) {
-    await api.rejectPendingPost(postId);
-    refreshPendingPosts();
-  }
 
   return (
     <div className="admin-view">
-      <section className="friend-section">
-        <h2>Posts awaiting points approval {pendingPosts.length ? `(${pendingPosts.length})` : ''}</h2>
-        {pendingPosts.length === 0 && <div className="empty-state">Nothing waiting on approval.</div>}
-        {pendingPosts.map((p) => (
-          <div key={p.postId} className="admin-report-card">
-            <img className="post-photo" src={p.photoUrl} alt="" />
-            <p><strong>{p.subjectUsername}</strong> caught by <strong>{p.creditedByUsername}</strong> <span className={`post-visibility ${p.visibility}`}>{p.visibility}</span></p>
-            {p.caption && <p className="post-caption">{p.caption}</p>}
-            <p className="fineprint">{p.pendingPoints} Beast Points pending</p>
-            <div className="credit-modal-actions">
-              <button type="button" className="friend-action remove" onClick={() => handleRejectPost(p.postId)}>Reject & remove</button>
-              <button type="button" onClick={() => handleApprovePost(p.postId)}>Approve</button>
-            </div>
-          </div>
-        ))}
-      </section>
-
       {reports.length === 0 && <div className="empty-state">No pending reports.</div>}
       {reports.map((r) => (
         <div key={r.id} className="admin-report-card">
