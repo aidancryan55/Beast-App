@@ -457,6 +457,21 @@ if (postCols.length) {
   if (!postCols.includes('subject_display_name')) {
     db.exec('ALTER TABLE posts ADD COLUMN subject_display_name TEXT');
   }
+  // Points-awarding moderation gate: a newly created post holds its starter
+  // points in pending_points until an admin approves it (see the admin
+  // approve/reject routes in index.js) — post_credits/the ledger only get
+  // written at approval time, not at post creation. DEFAULT 1 here (rather
+  // than 0) is deliberate: it means every post that already existed before
+  // this migration ran is backfilled as already-approved, since their
+  // points were already live under the old immediate-award model. Only
+  // posts created after this migration are inserted with points_approved
+  // explicitly set to 0.
+  if (!postCols.includes('points_approved')) {
+    db.exec('ALTER TABLE posts ADD COLUMN points_approved INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!postCols.includes('pending_points')) {
+    db.exec('ALTER TABLE posts ADD COLUMN pending_points INTEGER');
+  }
   // Old posts stored a single fixed `points` value with no post_credits row.
   // Backfill one post_credits row per legacy post so totals still add up under the new model.
   if (postCols.includes('points')) {

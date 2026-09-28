@@ -114,6 +114,7 @@ export const api = {
   savePost: (postId) => req(`/posts/${postId}/save`, { method: 'POST' }),
   creditPost: (postId, points, subjectUsername) => req(`/posts/${postId}/credit`, { method: 'POST', body: JSON.stringify({ points, subjectUsername }) }),
   reportPost: (postId, reason) => req(`/posts/${postId}/report`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  removePostTag: (postId) => req(`/posts/${postId}/tag`, { method: 'DELETE' }),
 
   getBlockedUsers: () => req('/users/_/blocked'),
   blockUser: (targetUsername) => req('/users/_/block', { method: 'POST', body: JSON.stringify({ targetUsername }) }),
@@ -141,6 +142,9 @@ export const api = {
   getAdminReports: () => req('/admin/reports'),
   resolveReport: (reportId, action) => req(`/admin/reports/${reportId}/resolve`, { method: 'POST', body: JSON.stringify({ action }) }),
   getAdminClientErrors: () => req('/admin/client-errors'),
+  getAdminPendingPosts: () => req('/admin/posts/pending'),
+  approvePendingPost: (postId) => req(`/admin/posts/${postId}/approve`, { method: 'POST' }),
+  rejectPendingPost: (postId) => req(`/admin/posts/${postId}/reject`, { method: 'POST' }),
 
   // Fire-and-forget — a failed error report shouldn't itself throw.
   reportClientError: (message, stack, url) =>

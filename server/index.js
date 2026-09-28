@@ -1570,6 +1570,8 @@ function serializePost(row, viewerUserId) {
     myCredit: myCreditRow ? myCreditRow.points : null,
     myCreditSubjectUsername: myCreditRow ? myCreditRow.subject_username : null,
     maxCredit,
+    pointsApproved: !!row.points_approved,
+    pendingPoints: row.pending_points || 0,
     caption: row.caption,
     saved: !!row.saved,
     photoUrl: row.photo_url || `/uploads/${row.photo_filename}`,
@@ -1681,9 +1683,9 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
   const isAnonymous = visibility === 'public' && body.isAnonymous === 'true';
 
   const info = db.prepare(`
-    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, inset_photo_filename, caption, is_anonymous)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, mainFile.filename, insetFile ? insetFile.filename : null, body.caption || null, isAnonymous ? 1 : 0);
+    INSERT INTO posts (subject_user_id, credited_by_user_id, activity_id, visibility, group_id, photo_filename, inset_photo_filename, caption, is_anonymous, points_approved, pending_points)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+  `).run(subject.id, creditedBy.id, activity ? activity.id : null, visibility, groupId, mainFile.filename, insetFile ? insetFile.filename : null, body.caption || null, isAnonymous ? 1 : 0, points);
 
   // Mirror the photo(s) into durable storage so they can survive the 24h
   // expiry cleanup for Memories — see uploadPhotoToR2's dev-fallback comment.
@@ -1708,19 +1710,10 @@ app.post('/api/posts', requireAuth, requireVerified, postLimiter, upload.fields(
     db.prepare('INSERT INTO post_additional_subjects (post_id, user_id) VALUES (?, ?)').run(info.lastInsertRowid, u.id);
   }
 
-  // Stored as a post_credits row (awarder = poster) so existing per-post
-  // display logic (creditorCount, card totals) needs no rework, and
-  // mirrored into the durable ledger so it survives expiry. For self-posts
-  // the post_credits row still lands (so the card shows the starter number),
-  // but the ledger write is skipped — the whole point of self-posts being
-  // display-only for the poster's own starter amount; only other members'
-  // later crowd credit is real.
-  db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, subject_user_id, points) VALUES (?, ?, ?, ?)')
-    .run(info.lastInsertRowid, creditedBy.id, subject.id, points);
-  if (!isSelfPost) {
-    writeLedgerEntry(subject.id, points, 'tag_starter', info.lastInsertRowid, creditedBy.id);
-  }
-
+  // Points are held pending admin approval (see points_approved above) —
+  // no post_credits row and no ledger write happen at creation time. The
+  // admin approve route inserts both, mirroring what this used to do
+  // immediately, once a moderator has reviewed the post.
   updateStreakOnPost(creditedBy.id);
 
   if (groupId) {
@@ -1737,6 +1730,7 @@ app.post('/api/posts/:postId/credit', requireAuth, requireVerified, (req, res) =
   const user = req.authUser;
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
   if (!post) return res.status(404).json({ error: 'Post not found' });
+  if (!post.points_approved) return res.status(400).json({ error: "This post is awaiting moderator approval before points can be given." });
 
   const isStranger = !!post.subject_display_name;
 
@@ -1989,6 +1983,22 @@ app.post('/api/posts/:postId/report', requireAuth, (req, res) => {
   res.status(201).json({ status: 'reported' });
 });
 
+// Lets anyone tagged on a post (primary or additional subject) take it down
+// unilaterally, no report/wait needed — the subject of a photo shouldn't
+// have to justify wanting it gone. Deliberately not offered to the poster
+// themselves; they already control whether to post it in the first place.
+app.delete('/api/posts/:postId/tag', requireAuth, (req, res) => {
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  const isSubject = post.subject_user_id === req.authUser.id;
+  const isAdditionalSubject = !!db.prepare(
+    'SELECT 1 FROM post_additional_subjects WHERE post_id = ? AND user_id = ?'
+  ).get(post.id, req.authUser.id);
+  if (!isSubject && !isAdditionalSubject) return res.status(403).json({ error: "You're not tagged on this post" });
+  deletePostAndFile(post.id);
+  res.status(204).end();
+});
+
 // Full, permanent removal — used by admin moderation (report resolve:
 // 'remove'/'ban'). Unlike expirePostFromFeeds below, this always deletes the
 // row and BOTH copies of the photo (local + R2) regardless of durability,
@@ -2147,6 +2157,54 @@ app.post('/api/admin/reports/:reportId/resolve', requireAuth, requireAdmin, (req
   res.json({ status: 'resolved' });
 });
 
+// --- Points-awarding moderation queue (see points_approved in db.js) ---
+// Every new post holds its starter points until an admin approves it here;
+// nothing gets written to post_credits/the ledger before that.
+app.get('/api/admin/posts/pending', requireAuth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT p.id as post_id, p.photo_filename, p.photo_url, p.caption, p.visibility, p.pending_points, p.created_at,
+           su.username as subject_username, cu.username as credited_by_username
+    FROM posts p
+    JOIN users su ON su.id = p.subject_user_id
+    JOIN users cu ON cu.id = p.credited_by_user_id
+    WHERE p.points_approved = 0
+    ORDER BY p.created_at ASC
+  `).all();
+  res.json(rows.map((r) => ({
+    postId: r.post_id,
+    photoUrl: r.photo_url || `/uploads/${r.photo_filename}`,
+    caption: r.caption,
+    visibility: r.visibility,
+    pendingPoints: r.pending_points,
+    createdAt: r.created_at,
+    subjectUsername: r.subject_username,
+    creditedByUsername: r.credited_by_username,
+  })));
+});
+
+app.post('/api/admin/posts/:postId/approve', requireAuth, requireAdmin, (req, res) => {
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  if (post.points_approved) return res.status(400).json({ error: 'Already approved' });
+
+  db.prepare('UPDATE posts SET points_approved = 1 WHERE id = ?').run(post.id);
+  const points = post.pending_points || 0;
+  db.prepare('INSERT INTO post_credits (post_id, awarder_user_id, subject_user_id, points) VALUES (?, ?, ?, ?)')
+    .run(post.id, post.credited_by_user_id, post.subject_user_id, points);
+  if (post.subject_user_id !== post.credited_by_user_id) {
+    writeLedgerEntry(post.subject_user_id, points, 'tag_starter', post.id, post.credited_by_user_id);
+    notifyUser(post.subject_user_id, 'social', { title: 'Your post was approved', body: `You got credited with ${points} Beast Points` });
+  }
+  res.json({ status: 'approved' });
+});
+
+app.post('/api/admin/posts/:postId/reject', requireAuth, requireAdmin, (req, res) => {
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.postId);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  deletePostAndFile(post.id);
+  res.json({ status: 'rejected' });
+});
+
 // Reclaim disk space from expired, unsaved photos.
 function cleanupExpiredPosts() {
   const cutoff = new Date(Date.now() - POST_EXPIRY_MS).toISOString().replace('T', ' ').slice(0, 19);
@@ -2241,16 +2299,17 @@ app.get('/community-guidelines', (req, res) => {
   <li>Nudity, sexual content, or sexual exploitation of any kind.</li>
   <li>Illegal activity, or content depicting or encouraging it.</li>
   <li>Dangerous stunts, dares, or anything that risks physical harm to the person in the photo or anyone else.</li>
+  <li>Chasing, following, cornering, or approaching someone in person just to get a photo, a reaction, or points. Only post moments you already captured naturally — never go looking for one.</li>
   <li>Posting someone else's personal information without their consent (doxxing) — home address, phone number, financial info, etc.</li>
   <li>Impersonating another person or account.</li>
   <li>Spam, scams, or automated/bot activity.</li>
 </ul>
 
 <h2>Tagging and consent</h2>
-<p>The core of this app is catching a friend on camera and crediting them. That only works if it stays fun for everyone involved: don't tag someone in a way meant to genuinely embarrass, shame, or expose them, and take a post down (or don't post it at all) if the person in it asks you to.</p>
+<p>The core of this app is catching a friend on camera and crediting them. That only works if it stays fun for everyone involved: don't tag someone in a way meant to genuinely embarrass, shame, or expose them, and take a post down (or don't post it at all) if the person in it asks you to. Anyone tagged in a post can remove it themselves at any time, instantly, with no need to file a report first. New posts also don't award any points until a moderator has reviewed and approved them.</p>
 
 <h2>Reporting and enforcement</h2>
-<p>Any post can be reported directly from its menu. Reports go to a moderation queue and are reviewed within 24 hours; violating content is removed and repeat or severe violations result in account suspension. You can also block any user at any time, which immediately hides their content from you and yours from them, with no notification sent to them.</p>
+<p>Any post can be reported directly from its menu. Reports go to a moderation queue and are reviewed within 24 hours; violating content is removed and repeat or severe violations result in account suspension. Chasing, following, or approaching someone to get content results in an immediate ban. You can also block any user at any time, which immediately hides their content from you and yours from them, with no notification sent to them.</p>
 
 <h2>Contact</h2>
 <p>Something you're not sure how to report, or want to flag directly? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>

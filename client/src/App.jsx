@@ -1131,6 +1131,35 @@ function ReportButton({ post, onReport }) {
   );
 }
 
+// Lets a tagged subject (primary or additional) take a post of themselves
+// down instantly, no report/wait needed — see the DELETE /api/posts/:id/tag
+// route this calls.
+function RemoveTagButton({ post, onRemoveTag }) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState('');
+
+  async function confirmRemove() {
+    setError('');
+    try {
+      await onRemoveTag(post.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  if (!confirming) {
+    return <button type="button" className="flag-btn" onClick={() => setConfirming(true)}>Remove this post of me</button>;
+  }
+  return (
+    <div className="report-form">
+      <span>Remove this post for everyone?</span>
+      <button type="button" onClick={confirmRemove}>Remove</button>
+      <button type="button" className="secondary-btn" onClick={() => setConfirming(false)}>×</button>
+      {error && <span className="error">{error}</span>}
+    </div>
+  );
+}
+
 function CustomReaction({ post, onReact }) {
   const [open, setOpen] = useState(false);
   const [emoji, setEmoji] = useState('');
@@ -1355,7 +1384,7 @@ function CommentsSection({ post, onComment }) {
   );
 }
 
-function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile }) {
+function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile, onRemoveTag }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapped, setSwapped] = useState(false); // tap-to-swap which shot is on top, purely local to this viewer
   const [activeSlide, setActiveSlide] = useState(0);
@@ -1368,6 +1397,8 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
   }
   const isSubject = post.subjectUsername.toLowerCase() === currentUsername.toLowerCase();
   const isPoster = post.creditedByUsername.toLowerCase() === currentUsername.toLowerCase();
+  const isAdditionalSubject = (post.additionalSubjects || []).some((s) => s.username.toLowerCase() === currentUsername.toLowerCase());
+  const isTagged = isSubject || isAdditionalSubject;
   const hoursLeft = post.saved ? null : Math.max(0, Math.ceil((Date.parse(post.expiresAt) - Date.now()) / 3600000));
   const posterName = post.isAnonymous ? 'Anonymous' : post.creditedByUsername;
   const posterInitial = post.isAnonymous ? '🕵️' : posterName.charAt(0).toUpperCase();
@@ -1407,6 +1438,7 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
         {menuOpen && (
           <div className="post-menu-dropdown">
             <ReportButton post={post} onReport={onReport} />
+            {isTagged && !isPoster && <RemoveTagButton post={post} onRemoveTag={onRemoveTag} />}
             {!isPoster && !post.isAnonymous && (
               <>
                 <button type="button" className="flag-btn" onClick={() => onMute(post.creditedByUsername)}>
@@ -1467,7 +1499,7 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
             ))}
           </div>
         )}
-        <div className="post-points-badge">+{post.points} BP</div>
+        <div className="post-points-badge">{post.pointsApproved ? `+${post.points} BP` : 'Pending approval'}</div>
         <div className="post-photo-actions">
           {[...REACTION_EMOJIS, ...post.reactions.map((r) => r.emoji).filter((e) => !REACTION_EMOJIS.includes(e))].map((emoji) => {
             const count = post.reactions.find((r) => r.emoji === emoji)?.count || 0;
@@ -1511,7 +1543,9 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
 
       <div className="post-card-footer">
         {post.creditorCount > 1 && <span className="post-creditors">{post.creditorCount} chipped in</span>}
-        {!isSubject && <GiveCredit post={post} onCredit={onCredit} />}
+        {!isSubject && (post.pointsApproved
+          ? <GiveCredit post={post} onCredit={onCredit} />
+          : <span className="fineprint">Awaiting moderator approval before points can be given</span>)}
         {isSubject && (
           <button className="save-btn" onClick={() => onSave(post.id)}>
             {post.saved ? 'Unsave' : 'Keep forever'}
@@ -1524,18 +1558,18 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
   );
 }
 
-function PostList({ posts, currentUsername, onReact, onReactWithSelfie, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile, emptyText }) {
+function PostList({ posts, currentUsername, onReact, onReactWithSelfie, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile, onRemoveTag, emptyText }) {
   if (!posts.length) return <div className="empty-state">{emptyText}</div>;
   return (
     <div className="post-list">
       {posts.map((post) => (
-        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onReactWithSelfie={onReactWithSelfie} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} onMute={onMute} onOpenProfile={onOpenProfile} />
+        <PostCard key={post.id} post={post} currentUsername={currentUsername} onReact={onReact} onReactWithSelfie={onReactWithSelfie} onComment={onComment} onSave={onSave} onCredit={onCredit} onReport={onReport} onBlock={onBlock} onMute={onMute} onOpenProfile={onOpenProfile} onRemoveTag={onRemoveTag} />
       ))}
     </div>
   );
 }
 
-function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onReactWithSelfie, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, showComposer, onCloseComposer }) {
+function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, onReact, onReactWithSelfie, onComment, onSave, onCredit, onSearchUsers, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, onRemoveTag, showComposer, onCloseComposer }) {
   useHideNavWhileOpen(showComposer);
   return (
     <div className="feed-view">
@@ -1558,6 +1592,7 @@ function DiscoverView({ discoverFeed, myGroups, currentUsername, onSubmitPost, o
         onSave={onSave}
         onCredit={onCredit}
         onReport={onReport}
+        onRemoveTag={onRemoveTag}
         onBlock={onBlock}
         onMute={onMute}
         onOpenProfile={onOpenProfile}
@@ -1685,7 +1720,7 @@ function GroupRequestsSection({ groupId, onApprovedOrDeclined }) {
   );
 }
 
-function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onReactWithSelfie, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, onRefreshGroup }) {
+function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSubmitPost, onReact, onReactWithSelfie, onComment, onSave, onCredit, onCreateActivity, onReport, onBlock, onMute, onOpenProfile, onRemoveTag, onRefreshGroup }) {
   const [showForm, setShowForm] = useState(false);
   useHideNavWhileOpen(showForm);
   return (
@@ -1724,6 +1759,7 @@ function GroupDetail({ group, groupFeed, currentUsername, onBack, onLeave, onSub
         onSave={onSave}
         onCredit={onCredit}
         onReport={onReport}
+        onRemoveTag={onRemoveTag}
         onBlock={onBlock}
         onMute={onMute}
         onOpenProfile={onOpenProfile}
@@ -2714,13 +2750,46 @@ function AdminView({ reports, onResolve }) {
   const [clientErrors, setClientErrors] = useState([]);
   const [showErrors, setShowErrors] = useState(false);
   const [expandedErrorId, setExpandedErrorId] = useState(null);
+  const [pendingPosts, setPendingPosts] = useState([]);
+
+  function refreshPendingPosts() {
+    api.getAdminPendingPosts().then(setPendingPosts).catch(() => {});
+  }
 
   useEffect(() => {
     api.getAdminClientErrors().then(setClientErrors).catch(() => {});
+    refreshPendingPosts();
   }, []);
+
+  async function handleApprovePost(postId) {
+    await api.approvePendingPost(postId);
+    refreshPendingPosts();
+  }
+
+  async function handleRejectPost(postId) {
+    await api.rejectPendingPost(postId);
+    refreshPendingPosts();
+  }
 
   return (
     <div className="admin-view">
+      <section className="friend-section">
+        <h2>Posts awaiting points approval {pendingPosts.length ? `(${pendingPosts.length})` : ''}</h2>
+        {pendingPosts.length === 0 && <div className="empty-state">Nothing waiting on approval.</div>}
+        {pendingPosts.map((p) => (
+          <div key={p.postId} className="admin-report-card">
+            <img className="post-photo" src={p.photoUrl} alt="" />
+            <p><strong>{p.subjectUsername}</strong> caught by <strong>{p.creditedByUsername}</strong> <span className={`post-visibility ${p.visibility}`}>{p.visibility}</span></p>
+            {p.caption && <p className="post-caption">{p.caption}</p>}
+            <p className="fineprint">{p.pendingPoints} Beast Points pending</p>
+            <div className="credit-modal-actions">
+              <button type="button" className="friend-action remove" onClick={() => handleRejectPost(p.postId)}>Reject & remove</button>
+              <button type="button" onClick={() => handleApprovePost(p.postId)}>Approve</button>
+            </div>
+          </div>
+        ))}
+      </section>
+
       {reports.length === 0 && <div className="empty-state">No pending reports.</div>}
       {reports.map((r) => (
         <div key={r.id} className="admin-report-card">
@@ -3142,6 +3211,13 @@ export default function App() {
     await withAuthGuard(() => api.reportPost(postId, reason));
   }
 
+  async function handleRemovePostTag(postId) {
+    await withAuthGuard(async () => {
+      await api.removePostTag(postId);
+      await refreshVisibleFeeds();
+    });
+  }
+
   async function refreshBlockedUsers() {
     setBlockedUsers(await api.getBlockedUsers());
   }
@@ -3272,6 +3348,7 @@ export default function App() {
             onSearchUsers={handleSearchUsers}
             onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
+            onRemoveTag={handleRemovePostTag}
             onBlock={handleBlockUser}
             onMute={handleMuteUser}
             onOpenProfile={openProfile}
@@ -3305,6 +3382,7 @@ export default function App() {
             onCredit={handleCreditPost}
             onCreateActivity={handleCreateActivity}
             onReport={handleReportPost}
+            onRemoveTag={handleRemovePostTag}
             onBlock={handleBlockUser}
             onMute={handleMuteUser}
             onOpenProfile={openProfile}
