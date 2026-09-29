@@ -202,7 +202,18 @@ function requireAdmin(req, res, next) {
 // actually satisfies Apple's UGC moderation requirement) — just a first-pass
 // block on the most obvious abuse in text fields. Photo content isn't
 // automatically screened; that needs a paid image-moderation API we don't have.
-const CAPTION_BLOCKLIST = [/\bn[i1]gg[ae3]r/i, /\bf[a4]gg?[o0]t/i, /\br[a4]pe/i, /\bch[i1]ld\s*p[o0]rn/i];
+const CAPTION_BLOCKLIST = [
+  /\bn[i1]gg[ae3]r/i, /\bf[a4]gg?[o0]t/i, /\br[a4]pe/i, /\bch[i1]ld\s*p[o0]rn/i,
+  // Alcohol/drug terms — see Guideline 1.4.3 (Physical Harm - controlled
+  // substances). Deliberately avoids ambiguous words with common innocuous
+  // meanings (e.g. "high", "shots", "coke") to keep false positives low.
+  /\bdr[u4]nk/i, /\bw[a4]sted/i, /\bh[a4]mmered/i, /\bbl[a4]ck\s*-?\s*out/i,
+  /\bbooze/i, /\b[a4]lcohol/i, /\bbeers?\b/i, /\bv[o0]dk[a4]/i, /\bteq[u1]il[a4]/i, /\bwhisk[e3]y/i,
+  /\bkeg\s*-?\s*st[a4]nd/i, /\bch[u1]gg?ing/i,
+  /\bwe[e3]d\b/i, /\bm[a4]rij?[u1][a4]n[a4]/i, /\bst[o0]ned\b/i, /\bj[o0]int\b/i, /\bblunt\b/i,
+  /\bc[o0]c[a4][i1]ne/i, /\bm[o0]lly\b/i, /\bx[a4]n[a4]x/i,
+  /\bv[a4]pe\b/i, /\bv[a4]ping/i, /\bnic[o0]t[i1]ne/i, /\bcigar[e3]ttes?\b/i,
+];
 function containsBlockedContent(text) {
   return typeof text === 'string' && CAPTION_BLOCKLIST.some((re) => re.test(text));
 }
@@ -2256,6 +2267,7 @@ app.get('/community-guidelines', (req, res) => {
   <li>Hate speech or content attacking someone based on race, ethnicity, religion, gender, sexual orientation, disability, or any other protected characteristic.</li>
   <li>Nudity, sexual content, or sexual exploitation of any kind.</li>
   <li>Illegal activity, or content depicting or encouraging it.</li>
+  <li>Alcohol, drugs, tobacco, vaping, or any controlled substance — visible use, possession, or content that promotes or encourages it, including jokes or captions referencing being drunk or high. Posts like this are removed on sight, no report needed.</li>
   <li>Dangerous stunts, dares, or anything that risks physical harm to the person in the photo or anyone else.</li>
   <li>Chasing, following, cornering, or approaching someone in person just to get a photo, a reaction, or points. Only post moments you already captured naturally — never go looking for one.</li>
   <li>Posting someone else's personal information without their consent (doxxing) — home address, phone number, financial info, etc.</li>
