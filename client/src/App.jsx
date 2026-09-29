@@ -1384,6 +1384,22 @@ function CommentsSection({ post, onComment }) {
   );
 }
 
+// Server sends created_at as a raw SQLite datetime ("YYYY-MM-DD HH:MM:SS", UTC,
+// no timezone marker) — the same 'T'+'Z' normalization used elsewhere for this
+// format is needed here too, or Date.parse silently treats it as local time.
+function timeAgo(createdAt) {
+  const ms = Date.now() - Date.parse(`${createdAt.replace(' ', 'T')}Z`);
+  const minutes = Math.max(0, Math.round(ms / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.round(days / 7);
+  return `${weeks}w ago`;
+}
+
 function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment, onSave, onCredit, onReport, onBlock, onMute, onOpenProfile, onRemoveTag }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [swapped, setSwapped] = useState(false); // tap-to-swap which shot is on top, purely local to this viewer
@@ -1431,6 +1447,7 @@ function PostCard({ post, currentUsername, onReact, onReactWithSelfie, onComment
           <div className="post-head-meta">
             {post.visibility === 'group' ? post.groupName : 'Public'}
             {post.activityName && <> · {post.activityIcon} {post.activityName}</>}
+            {' · '}{timeAgo(post.createdAt)}
             {' · '}{post.saved ? 'saved' : `${hoursLeft}h left`}
           </div>
         </div>
