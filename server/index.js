@@ -1393,6 +1393,22 @@ app.post('/api/groups', requireAuth, async (req, res) => {
   res.status(201).json(serializeGroup(group, req.authUser.id));
 });
 
+app.patch('/api/groups/:groupId', requireAuth, (req, res) => {
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  if (group.created_by_user_id !== req.authUser.id) return res.status(403).json({ error: 'Only the group creator can rename it' });
+  const { name, description } = req.body || {};
+  if (!name || !name.trim() || name.trim().length > 40) {
+    return res.status(400).json({ error: 'Group name must be 1-40 characters' });
+  }
+  if (containsBlockedContent(name) || containsBlockedContent(description)) {
+    return res.status(400).json({ error: "That isn't allowed." });
+  }
+  db.prepare('UPDATE groups SET name = ?, description = ? WHERE id = ?')
+    .run(name.trim(), (description || '').trim() || null, group.id);
+  res.json(serializeGroup(db.prepare('SELECT * FROM groups WHERE id = ?').get(group.id), req.authUser.id));
+});
+
 // Three ways in, depending on how the group was set up:
 //  - public: joins immediately, no barrier.
 //  - private + password set: joins immediately if the password matches.
