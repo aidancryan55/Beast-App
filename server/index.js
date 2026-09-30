@@ -1396,7 +1396,9 @@ app.post('/api/groups', requireAuth, async (req, res) => {
 app.patch('/api/groups/:groupId', requireAuth, (req, res) => {
   const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId);
   if (!group) return res.status(404).json({ error: 'Group not found' });
-  if (group.created_by_user_id !== req.authUser.id) return res.status(403).json({ error: 'Only the group creator can rename it' });
+  if (group.created_by_user_id !== req.authUser.id && !req.authUser.is_admin) {
+    return res.status(403).json({ error: 'Only the group creator can rename it' });
+  }
   const { name, description } = req.body || {};
   if (!name || !name.trim() || name.trim().length > 40) {
     return res.status(400).json({ error: 'Group name must be 1-40 characters' });
