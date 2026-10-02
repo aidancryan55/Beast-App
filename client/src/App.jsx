@@ -974,7 +974,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
           <input
             type="text"
             maxLength={40}
-            placeholder="e.g. Fell asleep in the library"
+            placeholder="e.g. Nailed the presentation"
             value={customActivity}
             onChange={(e) => setCustomActivity(e.target.value)}
           />
@@ -994,7 +994,7 @@ function CreatePostForm({ myGroups, currentUsername, onSubmit, onClose, onSearch
 
         <label>
           Caption (optional)
-          <input type="text" maxLength={140} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="caught him in the wild..." />
+          <input type="text" maxLength={140} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Say something nice..." />
         </label>
 
         {destination === 'public' && (
